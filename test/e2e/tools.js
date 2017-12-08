@@ -16,8 +16,8 @@ function registerAndLogin(email) {
             "email": email,
             "password": password,
         }).then(function (loginResponse) {
+            expect(loginResponse).to.have.status(200);
             me.current_token = loginResponse.body.auth_token;
-            console.log('set current_token to ' + me.current_token);
             expect(me.current_token).to.match(/^[a-z0-9]{40}$/);
             chakram.setRequestHeader('Authorization', 'Token ' + me.current_token);
         });

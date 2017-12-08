@@ -5,6 +5,9 @@ function registerAndLogin(email) {
     // register a user that we can login and work with
     var password = require("uuid").v4();
 
+    // logout first
+    chakram.setRequestHeader('Authorization', '');
+
     return chakram.post('/auth/users/create/', {
         "email": email,
         "password": password,

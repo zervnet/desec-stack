@@ -24,9 +24,14 @@ function registerAndLogin(email) {
     });
 }
 
+function registerDomain(name) {
+    return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
+}
+
 var me = {
     registerAndLogin: registerAndLogin,
     current_token: '',
+    registerDomain: registerDomain,
 };
 
 exports.tools = me;

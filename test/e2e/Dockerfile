@@ -15,6 +15,7 @@ COPY ./package.json ./
 RUN npm install
 
 COPY setup.js ./setup.js
+COPY tools.js ./tools.js
 COPY ./spec ./spec
 COPY ./apiwait ./apiwait
 

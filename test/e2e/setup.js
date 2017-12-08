@@ -63,6 +63,11 @@ chakram.setRequestHeader = function (header, value) {
     chakram.setRequestSettings(s);
 };
 
+chakram.getRequestHeader = function (header) {
+    var s = chakram.getRequestSettings();
+    return s.headers[header];
+};
+
 chakram.resolve = function (name, type) {
     var deferred = Q.defer();
 

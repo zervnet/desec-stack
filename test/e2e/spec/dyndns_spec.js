@@ -1,4 +1,5 @@
 var chakram = require("./../setup.js").chakram;
+var tools = require("./../tools.js").tools;
 var expect = chakram.expect;
 
 describe("dyndns service", function () {
@@ -73,25 +74,8 @@ describe("dyndns service", function () {
     var email = require("uuid").v4() + '@e2etest.local';
     describe("with user account [" + email + "]", function () {
 
-        var password, token;
-
-        before(function () {
-            // register a user that we can login and work with
-            password = require("uuid").v4();
-
-            return chakram.post('/auth/users/create/', {
-                "email": email,
-                "password": password,
-            }).then(function () {
-                return chakram.post('/auth/token/create/', {
-                    "email": email,
-                    "password": password,
-                }).then(function (loginResponse) {
-                    expect(loginResponse.body.auth_token).to.match(/^[a-z0-9]{40}$/);
-                    token = loginResponse.body.auth_token;
-                    chakram.setRequestHeader('Authorization', 'Token ' + token);
-                });
-            });
+        before(function() {
+            return tools.registerAndLogin(email);
         });
 
         describe("(logged in)", function () {
@@ -164,7 +148,6 @@ describe("dyndns service", function () {
         describe("and domain [" + domain + "]", function () {
 
             before(function () {
-                chakram.setRequestHeader('Authorization', 'Token ' + token);
                 return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
             });
 
@@ -173,6 +156,8 @@ describe("dyndns service", function () {
                 var apiAccessConfig;
 
                 before(function () {
+                    var token = tools.current_token;
+                    expect(token).to.match(/^[a-z0-9]{40}$/);
                     apiAccessConfig = {
                         headers: {
                             Host: 'desec.' + process.env.DESECSTACK_DOMAIN,

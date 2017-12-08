@@ -1,4 +1,5 @@
 var chakram = require("./../setup.js").chakram;
+var tools = require("./../tools.js").tools;
 var expect = chakram.expect;
 
 describe("API", function () {

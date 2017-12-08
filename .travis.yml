@@ -40,6 +40,12 @@ before_install:
   - git clone https://github.com/desec-io/desec-static.git static
   - mkdir static/ultima certs dbmastercerts
 
+  # generate docker-compose file
+  # this is a workaround for the fact that we can't /remove/ ports in overridden yml files
+  # see also https://github.com/docker/compose/pull/3939
+  - grep -v TRAVIS_REMOVE docker-compose.yml > docker-compose.travis.yml
+  - cat docker-compose.travis.yml
+
   # Prepare images
   # we build them separately to get timing information from travis
 
@@ -53,17 +59,17 @@ before_install:
   - docker-compose build www
 
   # mock images
-  - docker-compose -f docker-compose.yml -f docker-compose.test-e2e.yml build static
+  - docker-compose -f docker-compose.travis.yml -f docker-compose.test-e2e.yml build static
 
   # test images
-  - docker-compose -f docker-compose.yml -f docker-compose.test-e2e.yml build test-e2e
+  - docker-compose -f docker-compose.travis.yml -f docker-compose.test-e2e.yml build test-e2e
 
 script:
   # e2e tests
-  - docker-compose -f docker-compose.yml -f docker-compose.test-e2e.yml run -T test-e2e bash -c "./apiwait 45 && mocha ./spec"
+  - docker-compose -f docker-compose.travis.yml -f docker-compose.test-e2e.yml run -T test-e2e bash -c "./apiwait 45 && mocha ./spec"
 
   # API tests
-  - docker-compose -f docker-compose.yml -f docker-compose.test-api.yml run -T api bash -c "./entrypoint-tests.sh"
+  - docker-compose -f docker-compose.yml -f docker-compose.travis.yml -f docker-compose.test-api.yml run -T api bash -c "./entrypoint-tests.sh"
 
 after_failure:
   - docker-compose ps

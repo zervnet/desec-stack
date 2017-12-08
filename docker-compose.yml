@@ -74,8 +74,8 @@ services:
   dbmaster:
     build: dbmaster
     image: desec/dedyn-dbmaster:latest
-    ports:
-    - "3306:3306"
+    ports:  # TRAVIS_REMOVE
+    - "3306:3306"  # TRAVIS_REMOVE
     volumes:
     - ${DESECSTACK_DBMASTER_CERTS}:/etc/ssl/private:ro
     - dbmaster_mysql:/var/lib/mysql

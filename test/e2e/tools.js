@@ -25,7 +25,7 @@ function registerAndLogin(email) {
 }
 
 function registerDomain(name) {
-    return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
+    return expect(chakram.post('/domains/', {'name': name})).to.have.status(201);
 }
 
 var me = {

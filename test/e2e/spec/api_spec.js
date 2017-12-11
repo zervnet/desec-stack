@@ -54,8 +54,64 @@ describe("API", function () {
 
         describe("rrsets", function () {
 
-            var domain = 'e2etest-' + require("uuid").v4() + '.local';
-            before(function () {
+            var example_records = {
+                'A': ['1.2.3.4', '192.168.0.4', '10.1.1.1'],
+                'AAAA': ['feed:dead::beef', 'bad:c00f:fee::', 'feed:bade:affe:dead::beef'],
+                'CNAME': ['mycname.local.', 'differentcname.local.', 'another.cname.local'],
+                'MX': [
+                    '10 mail.domain.local.',
+                    '10 smtp.domain.local.',
+                    '5 alt2.aspmx.l.domain.local.',
+                ],
+                'SPF': [
+                    '"v=spf1 include:tinned-software.net ~all"',
+                    '"v=spf1 mx a include:tinned-software.net ~all"',
+                    '"v=spf1 mx a ~all"',
+                ],
+                'CAA': [
+                    '128 issue "domain.local"',
+                    '128 iodef "mailto:mail@domain.local"',
+                    '1 issue "letsencrypt.org"',
+                    '1 iodef "mailto:info@domain.local"',
+                ],
+            };
+
+            var ttls = [10, 60, 3600, 3600 * 24 * 7];
+
+            describe("no subname", function () {
+
+                Object.keys(example_records).forEach(function(recordType) {
+
+                    describe("type: " + recordType, function () {
+
+                        describe('can create record sets', function () {
+                            var domain = 'e2etest-' + require("uuid").v4() + '.local';
+
+                            before(function () {
+                                return tools.registerDomain(domain).then(function () {
+                                    return expect(chakram.post('/domains/' + domain + '/rrsets/', {
+                                        subname: "",
+                                        type: recordType,
+                                        records: [example_records[recordType][0]],
+                                        ttl: 60,
+                                    })).to.have.status(201);
+                                });
+                            });
+
+                            it('propagate to the API', function () {
+                                return expect(chakram.get('/domains/' + domain + '/rrsets/.../' + recordType + '/')).to.have.json('records', [example_records[recordType][0]]);
+                            });
+
+                            it('propagate to pdns', function () {
+                                expect(chakram.resolve(domain, recordType)).to.have.members([example_records[recordType][0]]);
+                                return chakram.wait();
+                            });
+
+                        });
+
+                    });
+
+                });
 
             });
 

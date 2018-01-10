@@ -10,7 +10,6 @@
   "license": "MIT",
   "dependencies": {
     "chakram": "~1.5.0",
-    "jquery": "~3.2.1",
     "jsdom": "~11.1.0",
     "atob": "^2.0.3",
     "btoa": "^1.1.2",

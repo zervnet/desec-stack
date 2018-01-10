@@ -1,6 +1,6 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-var chakram = require('/usr/local/lib/node_modules/chakram/lib/chakram.js');
+var chakram = require('chakram');
 var Q = require('q');
 
 // FIXME contacting nslord for DNS responses. This can changed to nsmaster as soon as changes to the DNS are applied

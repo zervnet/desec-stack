@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
 		dirmngr gnupg \
 	--no-install-recommends && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g chakram mocha
+RUN npm install -g mocha
 
 RUN mkdir /usr/src/app
 WORKDIR /usr/src/app

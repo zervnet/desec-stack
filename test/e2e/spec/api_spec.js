@@ -1,6 +1,7 @@
 var chakram = require("./../setup.js").chakram;
 var tools = require("./../tools.js").tools;
 var expect = chakram.expect;
+const uuidv4 = require('uuid/v4');
 
 describe("API", function () {
 
@@ -23,7 +24,7 @@ describe("API", function () {
 
     // note that registration and login functionality is tested in dyndns_spec.js
 
-    var email = require("uuid").v4() + '@e2etest.local';
+    var email = uuidv4() + '@e2etest.local';
     describe("[user " + email + "]", function () {
 
         before(function() {
@@ -33,11 +34,11 @@ describe("API", function () {
         describe("domains", function() {
 
             it("can be created", function() {
-                var domain = 'e2etest-' + require("uuid").v4() + '.local';
+                var domain = 'e2etest-' + uuidv4() + '.local';
                 return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
             });
 
-            var domain = 'e2etest-' + require("uuid").v4() + '.local';
+            var domain = 'e2etest-' + uuidv4() + '.local';
             describe("[domain " + domain + "]", function() {
 
                 before(function() {
@@ -85,7 +86,7 @@ describe("API", function () {
                     describe("type: " + recordType, function () {
 
                         describe('can create record sets', function () {
-                            var domain = 'e2etest-' + require("uuid").v4() + '.local';
+                            var domain = 'e2etest-' + uuidv4() + '.local';
 
                             before(function () {
                                 return tools.registerDomain(domain).then(function () {

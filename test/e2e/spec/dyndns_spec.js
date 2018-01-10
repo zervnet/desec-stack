@@ -1,6 +1,7 @@
 var chakram = require("./../setup.js").chakram;
 var tools = require("./../tools.js").tools;
 var expect = chakram.expect;
+const uuidv4 = require('uuid/v4');
 
 describe("dyndns service", function () {
 
@@ -28,8 +29,8 @@ describe("dyndns service", function () {
         it("returns a user object", function () {
             var email, password, token;
 
-            email = require("uuid").v4() + '@e2etest.local';
-            password = require("uuid").v4();
+            email = uuidv4() + '@e2etest.local';
+            password = uuidv4();
 
             var response = chakram.post('/auth/users/create/', {
                 "email": email,
@@ -48,8 +49,8 @@ describe("dyndns service", function () {
         before(function () {
 
             // register a user that we can work with
-            email = require("uuid").v4() + '@e2etest.local';
-            password = require("uuid").v4();
+            email = uuidv4() + '@e2etest.local';
+            password = uuidv4();
 
             var response = chakram.post('/auth/users/create/', {
                 "email": email,
@@ -71,7 +72,7 @@ describe("dyndns service", function () {
 
     });
 
-    var email = require("uuid").v4() + '@e2etest.local';
+    var email = uuidv4() + '@e2etest.local';
     describe("with user account [" + email + "]", function () {
 
         before(function() {
@@ -101,7 +102,7 @@ describe("dyndns service", function () {
             describe("domains endpoint", function () {
 
                 it("can register a domain name", function () {
-                    var domain = 'e2etest-' + require("uuid").v4() + '.dedyn.io';
+                    var domain = 'e2etest-' + uuidv4() + '.dedyn.io';
                     return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
                 });
 
@@ -112,7 +113,7 @@ describe("dyndns service", function () {
                 var domain;
 
                 before(function () {
-                    domain = 'e2etest-' + require("uuid").v4() + '.dedyn.io';
+                    domain = 'e2etest-' + uuidv4() + '.dedyn.io';
                     return expect(chakram.post('/domains/', {'name': domain})).to.have.status(201);
                 });
 
@@ -144,7 +145,7 @@ describe("dyndns service", function () {
 
         });
 
-        var domain = 'e2etest-' + require("uuid").v4() + '.dedyn.io';
+        var domain = 'e2etest-' + uuidv4() + '.dedyn.io';
         describe("and domain [" + domain + "]", function () {
 
             before(function () {

@@ -42,11 +42,11 @@ export default {
         text: 'Content',
         textCreate: 'Record Set Content',
         align: 'left',
-        sortable: true,
+        sortable: false,
         value: 'records',
         readonly: false,
         datatype: 'RRSet',
-        fieldProps: (rrSet) => ({ type: rrSet.type === undefined || rrSet.type === '' ? 'A' : rrSet.type }),
+        fieldProps: (rrSet) => ({ type: rrSet.type || 'A' }),
         searchable: true
       },
       ttl: {

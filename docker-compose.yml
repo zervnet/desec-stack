@@ -34,8 +34,6 @@ services:
   static:
     build: static
     image: desec/dedyn-static:latest
-    volumes:
-    - webapp_dist:/usr/share/nginx/html/webapp/
     networks:
     - rearwww
     logging:

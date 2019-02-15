@@ -398,13 +398,13 @@ export default {
   },
   computed: {
     headers () {
-      let h = Object.assign({}, this.columns) // copy cols (a shallow copy is sufficient here)
-      h.actions = {
+      let cols = Object.values(Object.assign({}, this.columns)) // (shallowly) copy cols and convert to array
+      cols.push({
         text: 'Actions',
         sortable: false,
         align: 'right'
-      }
-      return Object.values(h) // data table expects an array
+      })
+      return cols // data table expects an array
     }
   }
 }

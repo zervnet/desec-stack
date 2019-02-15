@@ -382,10 +382,6 @@ export default {
       }
       return p
     },
-    filterRows1 (items, search, filter) {
-      search = search.toString().toLowerCase()
-      return items.filter(row => filter(row['name'], search))
-    },
     filterRows (items, search, filter) {
       search = search.toString().toLowerCase()
       return items.filter((row) => (

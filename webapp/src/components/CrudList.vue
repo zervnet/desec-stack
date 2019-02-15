@@ -184,13 +184,13 @@ export default {
   data: () => ({
     createDialog: false,
     createDialogWorking: false,
-    createDialogIndex: -1,
+    createDialogIndex: null,
     createDialogItem: {},
     createDialogError: false,
     destroyDialog: false,
     destroyDialogWorking: false,
     destroyDialogItem: {},
-    destroyDialogIndex: -1,
+    destroyDialogIndex: null,
     destroyDialogError: false,
     working: false,
     errors: [],
@@ -284,7 +284,7 @@ export default {
      * Closes the destroy dialog and cleans up.
      */
     async destroyClose () {
-      this.destroyDialogIndex = -1
+      this.destroyDialogIndex = null
       this.destroyDialogItem = {}
       this.destroyDialog = false
       this.destroyDialogError = null
@@ -300,7 +300,7 @@ export default {
       for (let c in this.columns) {
         this.columns[c].createErrors = []
       }
-      if (this.createDialogIndex > -1) {
+      if (this.createDialogIndex) {
         // TODO implement edit object
       } else {
         // new item
@@ -327,7 +327,7 @@ export default {
     close () {
       this.createDialog = false
       this.createDialogItem = Object.assign({}, this.defaultObject)
-      this.createDialogIndex = -1
+      this.createDialogIndex = null
       this.createDialogError = false
       for (let c in this.columns) {
         this.columns[c].createErrors = []

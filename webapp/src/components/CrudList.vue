@@ -366,18 +366,18 @@ export default {
     },
     /***
      * Converts a URL template with parameters into a URL.
-     * All colon-prefixed placeholders (e.g., ":name") in p
-     * are replaced with a value if obj contains a property
-     * with the corresponding name.
+     * All colon-prefixed placeholders, enclosed in braces,
+     * (e.g., ":{name}") in p are replaced with a value if
+     * obj contains a property with the corresponding name.
      *
-     * @param p URL template, like /api/users/:id/posts/
+     * @param p URL template, like /api/users/:{id}/posts/
      * @param obj An object to take values from, like { id: 23, text: 'foo' }
      * @returns URL, like /api/users/23/posts/
      */
     resourcePath (p, obj, marker) {
       for (const property in obj) {
         if (obj.hasOwnProperty(property)) {
-          p = p.replace(marker + property, obj[property])
+          p = p.replace(marker + '{' + property + '}', obj[property])
         }
       }
       return p

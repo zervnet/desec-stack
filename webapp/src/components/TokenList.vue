@@ -57,7 +57,7 @@ export default {
     paths: {
       'list': 'tokens/',
       'create': 'tokens/',
-      'delete': 'tokens/:id/'
+      'delete': 'tokens/:{id}/'
     },
     defaultObject: { name: '' }
   })

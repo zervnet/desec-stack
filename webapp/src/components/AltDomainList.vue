@@ -49,7 +49,7 @@ export default {
     paths: {
       'list': 'domains/',
       'create': 'domains/',
-      'delete': 'domains/:name/'
+      'delete': 'domains/:{name}/'
     },
     defaultObject: { name: '' },
     postcreate: (d) => (alert('postcreate ' + d.name)),

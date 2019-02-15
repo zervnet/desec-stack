@@ -62,9 +62,9 @@ export default {
     actions: [
     ],
     paths: {
-      'list': 'domains/::name/rrsets/', // TODO dangerous?
-      'create': 'domains/::name/rrsets/',
-      'delete': 'domains/::name/rrsets/:subname.../:type/'
+      'list': 'domains/::{name}/rrsets/', // TODO dangerous?
+      'create': 'domains/::{name}/rrsets/',
+      'delete': 'domains/::{name}/rrsets/:{subname}.../:{type}/'
     },
     defaultObject: { type: 'A', subname: '', records: [''], ttl: 60 * 60 * 24 * 7 }
   })

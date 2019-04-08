@@ -26,6 +26,7 @@ export default {
         sortable: true,
         value: 'name',
         readonly: true,
+        writeOnCreate: true,
         datatype: 'GenericText',
         searchable: true
       },

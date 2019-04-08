@@ -53,7 +53,7 @@
                 :key="id"
                 :is="getDatatype(c.datatype, createDialogItem)"
                 v-bind="c.fieldProps ? c.fieldProps(createDialogItem) : {}"
-                v-if="!c.readonly"
+                v-if="!c.readonly || c.writeOnCreate"
                 v-model="createDialogItem[c.value]"
                 :label="c.textCreate || c.text"
                 :error-messages="c.createErrors"

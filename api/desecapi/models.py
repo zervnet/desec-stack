@@ -8,8 +8,7 @@ import datetime, uuid
 from django.core.validators import MinValueValidator
 from collections import OrderedDict
 import rest_framework.authtoken.models
-from time import time
-import random
+import time, random
 from os import urandom
 from base64 import b64encode
 
@@ -95,8 +94,11 @@ class User(AbstractBaseUser):
     def get_short_name(self):
         return self.email
 
-    def get_token(self):
-        token, created = Token.objects.get_or_create(user=self)
+    def get_or_create_first_token(self):
+        try:
+            token = Token.objects.filter(user=self).earliest('created')
+        except Token.DoesNotExist:
+            token = Token.objects.create(user=self)
         return token.key
 
     def __str__(self):
@@ -402,7 +404,7 @@ def get_default_value_due():
 
 
 def get_default_value_mref():
-    return "ONDON" + str((timezone.now() - timezone.datetime(1970,1,1,tzinfo=timezone.utc)).total_seconds())
+    return "ONDON" + str(time.time())
 
 
 class Donation(models.Model):

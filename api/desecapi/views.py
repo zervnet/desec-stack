@@ -11,14 +11,13 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.authentication import get_authorization_header
-from rest_framework.renderers import StaticHTMLRenderer
+from desecapi.renderers import PlainTextRenderer
 from dns import resolver
 from django.template.loader import get_template
 import desecapi.authentication as auth
 import base64, binascii
 from api import settings
-from rest_framework.exceptions import (
-    APIException, MethodNotAllowed, PermissionDenied, ValidationError)
+from rest_framework.exceptions import (NotFound, PermissionDenied, ValidationError)
 import django.core.exceptions
 from djoser import views, signals
 from rest_framework import status
@@ -36,6 +35,7 @@ import djoser.views
 from djoser.serializers import TokenSerializer as DjoserTokenSerializer
 from rest_framework.viewsets import GenericViewSet
 from rest_framework import mixins
+from rest_framework.settings import api_settings
 
 
 patternDyn = re.compile(r'^[A-Za-z-][A-Za-z0-9_-]*\.dedyn\.io$')
@@ -186,6 +186,11 @@ class RRsetDetail(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = RRsetSerializer
     permission_classes = (permissions.IsAuthenticated, IsDomainOwner,)
 
+    def dispatch(self, request, *args, **kwargs):
+        if kwargs['subname'] == '@':
+            kwargs['subname'] = ''
+        return super().dispatch(request, *args, **kwargs)
+
     def delete(self, request, *args, **kwargs):
         if request.user.locked:
             detail = "You cannot delete RRsets while your account is locked."
@@ -209,10 +214,17 @@ class RRsetDetail(generics.RetrieveUpdateDestroyAPIView):
             domain__name=name, subname=subname, type=type_)
 
     def update(self, request, *args, **kwargs):
+        if not isinstance(request.data, dict):
+            raise ValidationError({
+                api_settings.NON_FIELD_ERRORS_KEY: ['Invalid data. Expected a JSON object.']
+            }, code='invalid')
+
         if request.data.get('records') == []:
             return self.delete(request, *args, **kwargs)
 
         for k in ('type', 'subname'):
+            # This works because we exclusively use JSONParser which causes request.data to be
+            # a dict (and not an immutable QueryDict, as is the case for other parsers)
             request.data[k] = request.data.pop(k, self.kwargs[k])
 
         try:
@@ -224,7 +236,6 @@ class RRsetDetail(generics.RetrieveUpdateDestroyAPIView):
 
 
 class RRsetList(ListBulkCreateUpdateAPIView):
-    authentication_classes = (auth.TokenAuthentication, auth.IPAuthentication,)
     serializer_class = RRsetSerializer
     permission_classes = (permissions.IsAuthenticated, IsDomainOwner,)
 
@@ -343,7 +354,7 @@ class DnsQuery(APIView):
 
 class DynDNS12Update(APIView):
     authentication_classes = (auth.TokenAuthentication, auth.BasicTokenAuthentication, auth.URLParamAuthentication,)
-    renderer_classes = [StaticHTMLRenderer]
+    renderer_classes = [PlainTextRenderer]
 
     def findDomain(self, request):
         def findDomainname(request):
@@ -422,7 +433,7 @@ class DynDNS12Update(APIView):
         domain = self.findDomain(request)
 
         if domain is None:
-            raise Http404
+            raise NotFound('nohost')
 
         datas = {'A': self.findIPv4(request), 'AAAA': self.findIPv6(request)}
         rrsets = RRset.plain_to_RRsets(
@@ -432,7 +443,7 @@ class DynDNS12Update(APIView):
             domain=domain)
         domain.write_rrsets(rrsets)
 
-        return Response('good')
+        return Response('good', content_type='text/plain')
 
 class DonationList(generics.CreateAPIView):
     serializer_class = DonationSerializer
@@ -512,7 +523,7 @@ class UserCreateView(views.UserCreateView):
         if user.locked:
             send_account_lock_email(self.request, user)
         if not user.dyn:
-            context = {'token': user.get_token()}
+            context = {'token': user.get_or_create_first_token()}
             send_token_email(context, user)
         signals.user_registered.send(sender=self.__class__, user=user, request=self.request)
 
@@ -529,7 +540,7 @@ def unlock(request, email):
                 if user.locked:
                     user.unlock()
                     if not user.dyn:
-                        context = {'token': user.get_token()}
+                        context = {'token': user.get_or_create_first_token()}
                         send_token_email(context, user)
             except User.DoesNotExist:
                 # fail silently, so people can't probe registered addresses

@@ -193,7 +193,7 @@ class Domain(models.Model, mixins.SetterMixin):
 
     # This method does not use @transaction.atomic as this could lead to
     # orphaned zones on pdns.
-    def create_on_pdns(self):
+    def create_on_pdns(self, auto_delegate=True):
         """
         Create zone on pdns
 
@@ -207,16 +207,15 @@ class Domain(models.Model, mixins.SetterMixin):
         # response.
         pdns.create_zone(self, settings.DEFAULT_NS)
 
-        # Update published timestamp on domain
-        self.published = timezone.now()
-        self.save()
+        # Write known RRsets to pdns (may be none); also updates published timestamp
+        self.write_all_rrsets()
 
         # Make our RRsets consistent with pdns (specifically, NS may exist)
         self.sync_from_pdns()
 
         # For dedyn.io domains, propagate NS and DS delegation RRsets
         subname, parent_pdns_id = self.pdns_id.split('.', 1)
-        if parent_pdns_id == 'dedyn.io.':
+        if auto_delegate and parent_pdns_id == 'dedyn.io.':
             try:
                 parent = Domain.objects.get(name='dedyn.io')
             except Domain.DoesNotExist:
@@ -244,6 +243,15 @@ class Domain(models.Model, mixins.SetterMixin):
             rrs.extend([RR(rrset=rrset, content=record) for record in records])
         RRset.objects.bulk_create(rrsets)
         RR.objects.bulk_create(rrs)
+
+    @transaction.atomic
+    def write_all_rrsets(self):
+        self.published = timezone.now()
+        self.save()
+
+        rrsets = list(self.rrset_set.all())
+        if rrsets:
+            pdns.set_rrsets(self, rrsets)
 
     @transaction.atomic
     def write_rrsets(self, rrsets):

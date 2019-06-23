@@ -181,6 +181,9 @@ LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5
 if DEBUG and not EMAIL_HOST:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
 
+# user management
+VERIFICATION_CODE_TTL_S = 60 * 60 * 24
+
 if os.environ.get('DESECSTACK_E2E_TEST', "").upper() == "TRUE":
     DEBUG = True
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'

@@ -7,9 +7,17 @@ tokens_router = SimpleRouter()
 tokens_router.register(r'', views.TokenViewSet, base_name='token')
 
 auth_urls = [
+    # User management
+    path('', views.UserCreateView.as_view(), name='register'),
+    path('account/', views.AccountView.as_view(), name='account'),
+    path('account/delete/', views.AccountDeleteView.as_view(), name='account-delete'),
+    path('account/change-email/', views.AccountChangeEmailView.as_view(), name='account-change-email'),
+    path('account/reset-password/', views.AccountResetPasswordView.as_view(), name='account-reset-password'),
+    path('login/', views.AccountLoginView.as_view(), name='login'),
+    path('verify/', views.VerifyView.as_view(), name='verify'),  # TODO or account/verify/?
+
     # Token management
     path('tokens/', include(tokens_router.urls)),
-
 ]
 
 api_urls = [

@@ -14,6 +14,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Manager
+from django.template.loader import get_template
 from django.utils import timezone
 from rest_framework.exceptions import APIException
 
@@ -111,6 +112,45 @@ class User(AbstractBaseUser):
         """Is the user a member of staff?"""
         # Simplest possible answer: All admins are staff
         return self.is_admin
+
+    def activate(self):
+        self.is_active = True
+        self.save()
+
+    def change_email(self, email):
+        old_email = self.email
+        self.email = email
+        self.validate_unique()
+        self.save()
+
+        self.send_email('change-email-confirmation-old-email', recipient=old_email)
+
+    def change_password(self, raw_password):
+        super().set_password(raw_password)
+        self.save()
+
+        self.send_email('password-change-confirmation')
+
+    def send_email(self, reason, context={}, recipient=None):
+        reasons = [
+            'create-user',
+            'change-email',
+            'change-email-confirmation-old-email',
+            'password-change-confirmation',
+            'reset-password',
+            'delete-user',
+        ]
+        recipient = recipient or self.email
+        if not reason in reasons:
+            raise ValueError('Cannot send email to user {} without a good reason: {}'.format(self.email, reason))
+        content_tmpl = get_template('emails/{}/content.txt'.format(reason))
+        subject_tmpl = get_template('emails/{}/subject.txt'.format(reason))
+        from_tmpl = get_template('emails/from.txt')
+        email = EmailMessage(subject_tmpl.render(context).strip(),
+                             content_tmpl.render(context),
+                             from_tmpl.render(context),
+                             [recipient])
+        email.send()
 
 
 class Token(rest_framework.authtoken.models.Token):

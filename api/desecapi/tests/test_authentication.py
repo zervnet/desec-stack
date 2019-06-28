@@ -1,3 +1,8 @@
+import base64
+import json
+import re
+
+from django.core import mail
 from rest_framework import status
 from rest_framework.status import HTTP_200_OK, HTTP_401_UNAUTHORIZED
 
@@ -51,8 +56,8 @@ class SignUpLoginTestCase(DesecTestCase):
     REGISTRATION_ENDPOINT = None
     LOGIN_ENDPOINT = None
 
-    REGISTRATION_STATUS = status.HTTP_201_CREATED
-    LOGIN_STATUS = status.HTTP_201_CREATED
+    REGISTRATION_STATUS = status.HTTP_202_ACCEPTED
+    LOGIN_STATUS = status.HTTP_200_OK
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -72,6 +77,16 @@ class SignUpLoginTestCase(DesecTestCase):
             self.REGISTRATION_STATUS
         )
 
+    def activate(self):
+        total = 1
+        self.assertEqual(len(mail.outbox), total, "Expected %i message in the outbox, but found %i." %
+                         (total, len(mail.outbox)))
+        email = mail.outbox[-1]
+        self.assertTrue('Welcome' in email.subject)
+        verification_code = re.search(r'verification code: ([^\s]*)', email.body).group(1)
+        data = json.loads(base64.urlsafe_b64decode(verification_code.encode()).decode())
+        self.client.post(self.reverse('v1:verify'), data)
+
     def log_in(self):
         response = self.client.post(self.LOGIN_ENDPOINT, {
             'email': self.EMAIL,
@@ -81,18 +96,27 @@ class SignUpLoginTestCase(DesecTestCase):
 
     def test_sign_up(self):
         self.sign_up()
+        self.assertFalse(User.objects.get(email=self.EMAIL).is_active)
+
+    def test_activate(self):
+        self.sign_up()
+        self.activate()
+        self.assertTrue(User.objects.get(email=self.EMAIL).is_active)
 
     def test_log_in(self):
         self.sign_up()
+        self.activate()
         self.log_in()
 
     def test_log_in_twice(self):
         self.sign_up()
+        self.activate()
         self.log_in()
         self.log_in()
 
     def test_log_in_two_tokens(self):
-        self.sign_up()  # this may create a token
+        self.sign_up()
+        self.activate()
         for _ in range(2):
             Token.objects.create(user=User.objects.get(email=self.EMAIL))
         self.log_in()

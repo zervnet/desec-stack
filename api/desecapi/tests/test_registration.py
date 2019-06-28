@@ -17,7 +17,7 @@ class RegistrationTestCase(DesecTestCase):
         )
         self.user = models.User.objects.get(email=email)
 
-    def assertRegistration(self, remote_addr='', status=201, **kwargs):
+    def assertRegistration(self, remote_addr='', status=202, **kwargs):
         url = reverse('v1:register')
         post_kwargs = {}
         if remote_addr:

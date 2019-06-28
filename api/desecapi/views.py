@@ -1,10 +1,12 @@
 import base64
 import binascii
+import json
 
 import django.core.exceptions
 import psl_dns
 from django.core.mail import EmailMessage
 from django.db.models import Q
+from django.db.transaction import atomic
 from django.http import Http404
 from django.template.loader import get_template
 from rest_framework import generics
@@ -12,7 +14,9 @@ from rest_framework import mixins
 from rest_framework import status
 from rest_framework.authentication import get_authorization_header
 from rest_framework.exceptions import (NotFound, PermissionDenied, ValidationError)
-from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView, UpdateAPIView, get_object_or_404
+from rest_framework.generics import (
+    GenericAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, UpdateAPIView, get_object_or_404
+)
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
@@ -21,12 +25,12 @@ from rest_framework.viewsets import GenericViewSet
 
 import desecapi.authentication as auth
 from api import settings
-from desecapi.models import Domain, RRset
+from desecapi import serializers
+from desecapi.models import Domain, User, RRset, Token
 from desecapi.pdns import PDNSException
 from desecapi.pdns_change_tracker import PDNSChangeTracker
 from desecapi.permissions import IsOwner, IsDomainOwner
 from desecapi.renderers import PlainTextRenderer
-from desecapi.serializers import DomainSerializer, RRsetSerializer, DonationSerializer, TokenSerializer
 
 
 class IdempotentDestroy:
@@ -57,7 +61,7 @@ class TokenViewSet(IdempotentDestroy,
                    mixins.DestroyModelMixin,
                    mixins.ListModelMixin,
                    GenericViewSet):
-    serializer_class = TokenSerializer
+    serializer_class = serializers.TokenSerializer
     permission_classes = (IsAuthenticated, )
     lookup_field = 'user_specific_id'
 
@@ -69,7 +73,7 @@ class TokenViewSet(IdempotentDestroy,
 
 
 class DomainList(ListCreateAPIView):
-    serializer_class = DomainSerializer
+    serializer_class = serializers.DomainSerializer
     permission_classes = (IsAuthenticated, IsOwner,)
     psl = psl_dns.PSL(resolver=settings.PSL_RESOLVER)
 
@@ -163,7 +167,7 @@ class DomainList(ListCreateAPIView):
 
 
 class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):
-    serializer_class = DomainSerializer
+    serializer_class = serializers.DomainSerializer
     permission_classes = (IsAuthenticated, IsOwner,)
     lookup_field = 'name'
 
@@ -187,7 +191,7 @@ class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):
 
 
 class RRsetDetail(IdempotentDestroy, DomainView, RetrieveUpdateDestroyAPIView):
-    serializer_class = RRsetSerializer
+    serializer_class = serializers.RRsetSerializer
     permission_classes = (IsAuthenticated, IsDomainOwner,)
 
     def get_queryset(self):
@@ -225,7 +229,7 @@ class RRsetDetail(IdempotentDestroy, DomainView, RetrieveUpdateDestroyAPIView):
 
 
 class RRsetList(DomainView, ListCreateAPIView, UpdateAPIView):
-    serializer_class = RRsetSerializer
+    serializer_class = serializers.RRsetSerializer
     permission_classes = (IsAuthenticated, IsDomainOwner,)
 
     def get_queryset(self):
@@ -277,17 +281,19 @@ class RRsetList(DomainView, ListCreateAPIView, UpdateAPIView):
 
 class Root(APIView):
     def get(self, request, *_):
-        if self.request.user and self.request.user.is_authenticated:
-            return Response({
+        # TODO update
+        if self.request.user.is_authenticated:
+            routes = {
+                'account': reverse('account', request=request),
+                'tokens': reverse('token-list', request=request),
                 'domains': reverse('domain-list', request=request),
-                'user': reverse('user', request=request),
-                'logout': reverse('token-destroy', request=request),  # TODO change interface to token-destroy, too?
-            })
+            }
         else:
-            return Response({
-                'login': reverse('token-create', request=request),
+            routes = {
                 'register': reverse('register', request=request),
-            })
+                'login': reverse('login', request=request),
+            }
+        return Response(routes)
 
 
 class DynDNS12Update(APIView):
@@ -387,7 +393,7 @@ class DynDNS12Update(APIView):
         ]
 
         instances = domain.rrset_set.filter(subname='', type__in=['A', 'AAAA']).all()
-        serializer = RRsetSerializer(instances, domain=domain, data=data, many=True, partial=True)
+        serializer = serializers.RRsetSerializer(instances, domain=domain, data=data, many=True, partial=True)
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
@@ -400,7 +406,7 @@ class DynDNS12Update(APIView):
 
 
 class DonationList(generics.CreateAPIView):
-    serializer_class = DonationSerializer
+    serializer_class = serializers.DonationSerializer
 
     def perform_create(self, serializer):
         iban = serializer.validated_data['iban']
@@ -442,3 +448,142 @@ class DonationList(generics.CreateAPIView):
 
         # send emails
         send_donation_emails(obj)
+
+
+class UserCreateView(generics.CreateAPIView):
+    serializer_class = serializers.UserSerializer
+
+    def create(self, request, *args, **kwargs):
+        # Create user and send trigger email verification.
+        # Alternative would be to create user once email is verified, but this could be abused for bulk email.
+
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            # Hide existing users
+            email_detail = e.detail.pop('email', [])
+            email_detail = [detail for detail in email_detail if detail.code != 'unique']
+            if email_detail:
+                e.detail['email'] = email_detail
+            if e.detail:
+                raise e
+        else:
+            ip = self.request.META.get('REMOTE_ADDR')
+            user = serializer.save(is_active=False, registration_remote_ip=ip)
+
+            verification_serializer_data = serializers.VerifySerializer({'action': 'register', 'user': user}).data
+            user.send_email('create-user', context={
+                'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+            })
+
+        # This request is unauthenticated, so don't expose whether we did anything.
+        return Response(data={'detail': 'Welcome! Please check your mailbox.'},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class AccountView(generics.RetrieveAPIView):
+    permission_classes = (IsAuthenticated,)
+    serializer_class = serializers.UserSerializer
+
+    def get_object(self):
+        return self.request.user
+
+
+class AccountDeleteView(GenericAPIView):
+    permission_classes = (IsAuthenticated,)
+    serializer_class = serializers.PasswordSerializer
+
+    def get_object(self):
+        return self.request.user
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        verification_serializer_data = serializers.VerifySerializer({'action': 'delete', 'user': request.user}).data
+        request.user.send_email('delete-user', context={
+            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+        })
+
+        # At this point, we know that we are talking to the user, so we can tell that we sent an email.
+        return Response(data={'detail': 'Please check your mailbox for further account deletion instructions.'},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class AccountLoginView(GenericAPIView):
+    serializer_class = serializers.LoginSerializer
+
+    def post(self, request, *args, **kwargs):
+        # TODO Move to authentication class?
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data.get('user')
+
+        token = Token(user=user, name="login")
+        token.save()
+        user_logged_in.send(sender=user.__class__, request=self.request, user=user)
+
+        data = serializers.TokenSerializer(token).data
+        return Response(data=data, status=status.HTTP_200_OK)
+
+
+class AccountChangeEmailView(GenericAPIView):
+    permission_classes = (IsAuthenticated, )
+    serializer_class = serializers.ChangeEmailSerializer
+
+    def post(self, request, *args, **kwargs):
+        # Check password and extract email
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_email = serializer.validated_data['new_email']
+
+        verification_data = {'action': 'change-email', 'user': request.user, 'email': new_email}
+        verification_serializer_data = serializers.VerifySerializer(verification_data).data
+        request.user.send_email('change-email', recipient=new_email, context={
+            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+        })
+
+        # At this point, we know that we are talking to the user, so we can tell that we sent an email.
+        return Response(data={'detail': 'Please check your mailbox to confirm email address change.'},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class AccountResetPasswordView(GenericAPIView):
+    serializer_class = serializers.EmailSerializer
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            email = serializer.validated_data['email']
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            pass
+        else:
+            verification_serializer_data = serializers.VerifySerializer({'action': 'change-password', 'user': user}).data
+            user.send_email('reset-password', context={
+                'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+            })
+
+        # This request is unauthenticated, so don't expose whether we did anything.
+        return Response(data={'detail': 'Please check your mailbox for further password reset instructions.'},
+                        status=status.HTTP_202_ACCEPTED)
+
+
+class VerifyView(GenericAPIView):
+    serializer_class = serializers.VerifySerializer
+
+    @atomic
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        details = {
+            'register': 'Success! Please log in at {}.'.format(self.request.build_absolute_uri(reverse('v1:login'))),
+            'change-email': 'Success! Your email address has been changed.',
+            'change-password': 'Success! Your password has been changed.',
+            'delete': 'All your data has been deleted. Bye bye, see you soon! <3'
+        }
+        return Response(data={'detail': details[serializer.validated_data['action']]})

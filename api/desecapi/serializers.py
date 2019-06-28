@@ -1,7 +1,13 @@
+import hashlib
+import pickle
 import re
+import time
 
+from django.contrib.auth import authenticate
+from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
+from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
 from rest_framework.fields import empty, SkipField, ListField, CharField
 from rest_framework.serializers import ListSerializer
@@ -12,14 +18,14 @@ from desecapi.models import Domain, Donation, User, RRset, Token, RR
 
 
 class TokenSerializer(serializers.ModelSerializer):
-    value = serializers.ReadOnlyField(source='key')
+    auth_token = serializers.ReadOnlyField(source='key')
     # note this overrides the original "id" field, which is the db primary key
     id = serializers.ReadOnlyField(source='user_specific_id')
 
     class Meta:
         model = Token
-        fields = ('id', 'created', 'name', 'value',)
-        read_only_fields = ('created', 'value', 'id')
+        fields = ('id', 'created', 'name', 'auth_token',)
+        read_only_fields = ('created', 'auth_token', 'id')
 
 
 class RequiredOnPartialUpdateCharField(serializers.CharField):
@@ -453,3 +459,175 @@ class DonationSerializer(serializers.ModelSerializer):
     @staticmethod
     def validate_iban(value):
         return re.sub(r'[\s]', '', value)
+
+
+class UserSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = User
+        fields = ('created', 'email', 'id', 'limit_domains', 'password',)
+        extra_kwargs = {
+            'password': {
+                'write_only': True,  # Do not expose password field
+                'trim_whitespace': False,  # Take passwords literally
+            }
+        }
+
+    def create(self, validated_data):
+        return User.objects.create_user(**validated_data)
+
+
+class EmailSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class BasePasswordSerializer(serializers.Serializer):
+    password = serializers.CharField(trim_whitespace=False)
+
+
+class PasswordSerializer(BasePasswordSerializer):
+    def validate_password(self, value):
+        user = self.context.get('request').user
+        if not user.check_password(value):
+            msg = 'Password mismatch.'
+            raise serializers.ValidationError(msg, code='authorization')
+
+        return value
+
+
+class ChangeEmailSerializer(PasswordSerializer):
+    # PasswordSerializer confirms that given password belongs to authenticated user.
+    # Independently of that, a new email address must be given.
+    new_email = serializers.EmailField()
+
+    def validate_new_email(self, value):
+        if value == self.context['request'].user.email:
+            raise serializers.ValidationError('Email address unchanged.')
+        return value
+
+
+class LoginSerializer(EmailSerializer, BasePasswordSerializer):
+    # This is inspired by rest_framework.authtoken.serializers.AuthTokenSerializer.
+    def validate(self, attrs):
+        user = authenticate(request=self.context.get('request'), email=attrs['email'], password=attrs['password'])
+
+        # The authenticate call simply returns None for is_active=False users.
+        # (Assuming the default ModelBackend authentication backend.)
+        if not user:
+            msg = 'Unable to log in with provided credentials.'
+            raise serializers.ValidationError(msg, code='authorization')
+
+        attrs['user'] = user
+        return attrs
+
+
+def sign(instance, state_attributes, timestamp_field='timestamp'):
+    def get_dict_repr(data):
+        PICKLE_REPR_PROTOCOL = 4
+        data_items = sorted([(str(k), str(v)) for k, v in data.items()])
+        return pickle.dumps(data_items, PICKLE_REPR_PROTOCOL)
+
+    instance = instance.copy()  ## Act on a copy of the original object
+    timestamp = None
+    if timestamp_field is not None:
+        timestamp = instance.pop(timestamp_field, int(time.time()))
+
+    payload = instance.copy()
+    objects = {}
+    state = {}
+    for object_field in state_attributes:
+        obj = payload.pop(object_field)
+        objects[object_field] = getattr(obj, 'pk')
+        state[object_field] = {attr: getattr(obj, attr) for attr in state_attributes[object_field]}
+    state = get_dict_repr(state)
+    state = hashlib.sha256(state).hexdigest()
+    payload = get_dict_repr(payload)
+    data = {'objects': objects, 'state': state, 'payload': payload, 'timestamp': timestamp}
+    instance['signature'] = Signer().signature(get_dict_repr(data))
+    if timestamp is not None:
+        instance[timestamp_field] = timestamp
+    return instance
+
+
+class VerifySerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=['register', 'change-email', 'change-password', 'delete'])
+    user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(),
+                                              error_messages={'does_not_exist': 'This user does not exist.'})
+    email = serializers.EmailField(required=False)
+    password = serializers.CharField(required=False, trim_whitespace=False)
+    signature = serializers.CharField()
+    timestamp = serializers.IntegerField(required=False)
+
+    def sign(self, instance):
+        return sign(instance, state_attributes={'user': ['is_active', 'email', 'password']})
+
+    def to_representation(self, instance):
+        # Having email and password at the same time is currently not a use case
+        assert not (instance.get('email') and instance.get('password'))
+        signed_instance = self.sign(instance)
+        ret = super().to_representation(signed_instance)
+        assert '@' not in str(ret['user'])  # make sure the user representation does not expose the email address
+        return ret
+
+    def validate(self, attrs):
+        # First, verify signature
+        expected_signature = attrs['signature']
+
+        validation_data = attrs.copy()
+        validation_data.pop('password', None)  # does not get signed (not known at signing time)
+        validation_data.pop('signature')  #
+        validated_signature = self.sign(validation_data)['signature']
+
+        if not constant_time_compare(validated_signature, expected_signature):
+            raise serializers.ValidationError('Bad signature.')
+
+        # Second, verify presence of expected fields only
+        allowed_fields_by_action = {
+            'register': [],
+            'change-email': ['email'],
+            'change-password': ['password'],
+            'delete': [],
+        }
+        action = attrs['action']
+        allowed_fields = allowed_fields_by_action[action] + ['action', 'user', 'signature', 'timestamp']
+        message_dict = {field: 'This field is not allowed for action {}.'.format(action)
+                        for field in self.initial_data if field not in allowed_fields}
+
+        # Third, action-dependent stuff
+        if action == 'change-email' and User.objects.filter(email=attrs['email']).exists():
+            message_dict['email'] = 'You already have another account with this email address.'
+
+        # If necessary, raise validation error
+        if message_dict:
+            raise serializers.ValidationError(detail=message_dict)
+
+        return attrs
+
+    @property
+    def validated_user(self):
+        return self.validated_data['user']
+
+    def _save_register(self):
+        self.validated_user.activate()
+
+    def _save_change_email(self):
+        self.validated_user.change_email(self.validated_data['email'])
+
+    def _save_change_password(self):
+        assert 'email' not in self.validated_data
+        self.validated_user.change_password(self.validated_data['password'])
+
+    def _save_delete(self):
+        self.validated_user.delete()
+
+    def save(self):
+        action_functions = {
+            'register': self._save_register,
+            'change-email': self._save_change_email,
+            'change-password': self._save_change_password,
+            'delete': self._save_delete
+        }
+        action = self.validated_data['action']
+        action_functions[action]()
+
+        # TODO return user?`

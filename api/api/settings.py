@@ -39,7 +39,6 @@ INSTALLED_APPS = (
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'rest_framework',
-    'djoser',
     'desecapi',
     'corsheaders',
 )
@@ -93,20 +92,6 @@ REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'desecapi.exception_handlers.exception_handler',
     'DEFAULT_VERSIONING_CLASS': 'rest_framework.versioning.NamespaceVersioning',
     'ALLOWED_VERSIONS': ['v1', 'v2'],
-}
-
-# user management configuration
-DJOSER = {
-    'DOMAIN': 'desec.io',
-    'SITE_NAME': 'deSEC',
-    'LOGIN_AFTER_ACTIVATION': True,
-    'SEND_ACTIVATION_EMAIL': False,
-    'SERIALIZERS': {
-        'current_user': 'desecapi.serializers.UserSerializer',
-        'user': 'desecapi.serializers.UserSerializer',
-        'user_create': 'desecapi.serializers.UserCreateSerializer',
-    },
-    'TOKEN_MODEL': 'desecapi.models.Token',
 }
 
 # CORS
@@ -165,30 +150,17 @@ SEPA = {
     'CREDITOR_NAME': os.environ['DESECSTACK_API_SEPA_CREDITOR_NAME'],
 }
 
-# recaptcha
-NORECAPTCHA_SITE_KEY = os.environ['DESECSTACK_NORECAPTCHA_SITE_KEY']
-NORECAPTCHA_SECRET_KEY = os.environ['DESECSTACK_NORECAPTCHA_SECRET_KEY']
-NORECAPTCHA_WIDGET_TEMPLATE = 'captcha-widget.html'
-
-# abuse protection
+# user management and abuse protection
 MINIMUM_TTL_DEFAULT = int(os.environ['DESECSTACK_MINIMUM_TTL_DEFAULT'])
-ABUSE_BY_REMOTE_IP_LIMIT = 1
 ABUSE_BY_REMOTE_IP_PERIOD_HRS = 48
-ABUSE_BY_EMAIL_HOSTNAME_LIMIT = 1
-ABUSE_BY_EMAIL_HOSTNAME_PERIOD_HRS = 24
 LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5
+VERIFICATION_CODE_TTL_S = 60 * 60 * 24
 
 if DEBUG and not EMAIL_HOST:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
 
-# user management
-VERIFICATION_CODE_TTL_S = 60 * 60 * 24
-
 if os.environ.get('DESECSTACK_E2E_TEST', "").upper() == "TRUE":
     DEBUG = True
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
-    ABUSE_BY_REMOTE_IP_LIMIT = 100
     ABUSE_BY_REMOTE_IP_PERIOD_HRS = 0
-    ABUSE_BY_EMAIL_HOSTNAME_LIMIT = 100
-    ABUSE_BY_EMAIL_HOSTNAME_PERIOD_HRS = 0
     LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5000

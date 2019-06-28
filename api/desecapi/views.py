@@ -1,22 +1,12 @@
 import base64
 import binascii
-import ipaddress
-import os
-import re
-from datetime import timedelta
 
 import django.core.exceptions
-import djoser.views
 import psl_dns
-from django.contrib.auth import user_logged_in, user_logged_out
 from django.core.mail import EmailMessage
 from django.db.models import Q
-from django.http import Http404, HttpResponseRedirect
-from django.shortcuts import render
+from django.http import Http404
 from django.template.loader import get_template
-from django.utils import timezone
-from djoser import views, signals
-from djoser.serializers import TokenSerializer as DjoserTokenSerializer
 from rest_framework import generics
 from rest_framework import mixins
 from rest_framework import status
@@ -31,17 +21,12 @@ from rest_framework.viewsets import GenericViewSet
 
 import desecapi.authentication as auth
 from api import settings
-from desecapi.emails import send_account_lock_email, send_token_email
-from desecapi.forms import UnlockForm
-from desecapi.models import Domain, User, RRset, Token
+from desecapi.models import Domain, RRset
 from desecapi.pdns import PDNSException
 from desecapi.pdns_change_tracker import PDNSChangeTracker
-from desecapi.permissions import IsOwner, IsUnlocked, IsDomainOwner
+from desecapi.permissions import IsOwner, IsDomainOwner
 from desecapi.renderers import PlainTextRenderer
 from desecapi.serializers import DomainSerializer, RRsetSerializer, DonationSerializer, TokenSerializer
-
-patternDyn = re.compile(r'^[A-Za-z-][A-Za-z0-9_-]*\.dedyn\.io$')
-patternNonDyn = re.compile(r'^([A-Za-z0-9-][A-Za-z0-9_-]*\.)*[A-Za-z]+$')
 
 
 class IdempotentDestroy:
@@ -65,31 +50,6 @@ class DomainView:
             self.domain = self.request.user.domains.get(name=self.kwargs['name'])
         except Domain.DoesNotExist:
             raise Http404
-
-
-class TokenCreateView(djoser.views.TokenCreateView):
-
-    def _action(self, serializer):
-        user = serializer.user
-        token = Token(user=user, name="login")
-        token.save()
-        user_logged_in.send(sender=user.__class__, request=self.request, user=user)
-        token_serializer_class = DjoserTokenSerializer
-        return Response(
-            data=token_serializer_class(token).data,
-            status=status.HTTP_201_CREATED,
-        )
-
-
-class TokenDestroyView(djoser.views.TokenDestroyView):
-
-    def post(self, request):
-        _, token = auth.TokenAuthentication().authenticate(request)
-        token.delete()
-        user_logged_out.send(
-            sender=request.user.__class__, request=request, user=request.user
-        )
-        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TokenViewSet(IdempotentDestroy,
@@ -118,15 +78,6 @@ class DomainList(ListCreateAPIView):
 
     def perform_create(self, serializer):
         domain_name = serializer.validated_data['name']
-
-        pattern = patternDyn if self.request.user.dyn else patternNonDyn
-        if pattern.match(domain_name) is None:
-            ex = ValidationError(detail={
-                "detail": "This domain name is not well-formed, by policy.",
-                "code": "domain-illformed"}
-            )
-            ex.status_code = status.HTTP_409_CONFLICT
-            raise ex
 
         # Check if domain is a public suffix
         try:
@@ -237,7 +188,7 @@ class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):
 
 class RRsetDetail(IdempotentDestroy, DomainView, RetrieveUpdateDestroyAPIView):
     serializer_class = RRsetSerializer
-    permission_classes = (IsAuthenticated, IsDomainOwner, IsUnlocked,)
+    permission_classes = (IsAuthenticated, IsDomainOwner,)
 
     def get_queryset(self):
         return self.domain.rrset_set
@@ -275,7 +226,7 @@ class RRsetDetail(IdempotentDestroy, DomainView, RetrieveUpdateDestroyAPIView):
 
 class RRsetList(DomainView, ListCreateAPIView, UpdateAPIView):
     serializer_class = RRsetSerializer
-    permission_classes = (IsAuthenticated, IsDomainOwner, IsUnlocked,)
+    permission_classes = (IsAuthenticated, IsDomainOwner,)
 
     def get_queryset(self):
         rrsets = RRset.objects.filter(domain=self.domain)
@@ -344,10 +295,6 @@ class DynDNS12Update(APIView):
     renderer_classes = [PlainTextRenderer]
 
     def _find_domain(self, request):
-        if self.request.user.locked:
-            # Error code from https://help.dyn.com/remote-access-api/return-codes/
-            raise PermissionDenied('abuse')
-
         def find_domain_name(r):
             # 1. hostname parameter
             if 'hostname' in r.query_params and r.query_params['hostname'] != 'YES':
@@ -495,56 +442,3 @@ class DonationList(generics.CreateAPIView):
 
         # send emails
         send_donation_emails(obj)
-
-
-class UserCreateView(views.UserCreateView):
-    """
-    Extends the djoser UserCreateView to record the remote IP address of any registration.
-    """
-
-    def perform_create(self, serializer):
-        remote_ip = self.request.META.get('REMOTE_ADDR')
-        lock = (
-                ipaddress.ip_address(remote_ip) not in ipaddress.IPv6Network(os.environ['DESECSTACK_IPV6_SUBNET'])
-                and (
-                    User.objects.filter(
-                        created__gte=timezone.now()-timedelta(hours=settings.ABUSE_BY_REMOTE_IP_PERIOD_HRS),
-                        registration_remote_ip=remote_ip
-                    ).count() >= settings.ABUSE_BY_REMOTE_IP_LIMIT
-                    or
-                    User.objects.filter(
-                        created__gte=timezone.now() - timedelta(hours=settings.ABUSE_BY_EMAIL_HOSTNAME_PERIOD_HRS),
-                        email__endswith='@{0}'.format(serializer.validated_data['email'].split('@')[-1])
-                    ).count() >= settings.ABUSE_BY_EMAIL_HOSTNAME_LIMIT
-                )
-            )
-
-        user = serializer.save(registration_remote_ip=remote_ip, lock=lock)
-        if user.locked:
-            send_account_lock_email(self.request, user)
-        if not user.dyn:
-            context = {'token': user.get_or_create_first_token()}
-            send_token_email(context, user)
-        signals.user_registered.send(sender=self.__class__, user=user, request=self.request)
-
-
-def unlock(request, email):
-    # if this is a POST request we need to process the form data
-    if request.method == 'POST':
-        # create a form instance and populate it with data from the request:
-        form = UnlockForm(request.POST)
-        # check whether it's valid:
-        if form.is_valid():
-            User.objects.filter(email=email).update(locked=None)
-
-            return HttpResponseRedirect(reverse('v1:unlock/done', request=request))  # TODO remove dependency on v1
-
-    # if a GET (or any other method) we'll create a blank form
-    else:
-        form = UnlockForm()
-
-    return render(request, 'unlock.html', {'form': form})
-
-
-def unlock_done(request):
-    return render(request, 'unlock-done.html')

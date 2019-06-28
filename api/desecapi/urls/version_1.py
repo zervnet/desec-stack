@@ -1,5 +1,4 @@
 from django.urls import include, path, re_path
-from djoser.views import UserView
 from rest_framework.routers import SimpleRouter
 
 from desecapi import views
@@ -8,22 +7,9 @@ tokens_router = SimpleRouter()
 tokens_router.register(r'', views.TokenViewSet, base_name='token')
 
 auth_urls = [
-    # Old user management
-    # TODO deprecated, remove
-    path('users/create/', views.UserCreateView.as_view(), name='user-create'),  # deprecated
-    path('token/create/', views.TokenCreateView.as_view(), name='token-create'),  # deprecated
-    path('token/destroy/', views.TokenDestroyView.as_view(), name='token-destroy'),  # deprecated
-
-    # New user management
-    path('users/', views.UserCreateView.as_view(), name='register'),
-
     # Token management
-    path('token/login/', views.TokenCreateView.as_view(), name='login'),
-    path('token/logout/', views.TokenDestroyView.as_view(), name='logout'),
     path('tokens/', include(tokens_router.urls)),
 
-    # User home
-    path('me/', UserView.as_view(), name='user'),
 ]
 
 api_urls = [
@@ -47,10 +33,6 @@ api_urls = [
 
     # Donation endpoints
     path('donation/', views.DonationList.as_view(), name='donation'),
-
-    # Unlock endpoints
-    path('unlock/user/<email>', views.unlock, name='unlock/byEmail'),
-    path('unlock/done', views.unlock_done, name='unlock/done'),
 ]
 
 app_name = 'desecapi'

@@ -98,18 +98,6 @@ class SignUpLoginTestCase(DesecTestCase):
         self.log_in()
 
 
-class URLSignUpLoginTestCase(SignUpLoginTestCase):
-
-    REGISTRATION_ENDPOINT = '/api/v1/auth/users/'
-    LOGIN_ENDPOINT = '/api/v1/auth/token/login/'
-
-
-class LegacyURLSignUpLoginTestCase(SignUpLoginTestCase):
-
-    REGISTRATION_ENDPOINT = '/api/v1/auth/users/create/'
-    LOGIN_ENDPOINT = '/api/v1/auth/token/create/'
-
-
 class TokenAuthenticationTestCase(DynDomainOwnerTestCase):
 
     def _get_domains(self):

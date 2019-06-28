@@ -883,7 +883,7 @@ class DomainOwnerTestCase(DesecTestCase):
     def setUpTestDataWithPdns(cls):
         super().setUpTestDataWithPdns()
 
-        cls.owner = cls.create_user(dyn=cls.DYN)
+        cls.owner = cls.create_user()
 
         domain_kwargs = {'suffix': cls.AUTO_DELEGATION_DOMAINS if cls.DYN else None}
         if cls.DYN:

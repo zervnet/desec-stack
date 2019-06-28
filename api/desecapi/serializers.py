@@ -2,7 +2,6 @@ import re
 
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
-from djoser import serializers as djoser_serializers
 from rest_framework import serializers
 from rest_framework.fields import empty, SkipField, ListField, CharField
 from rest_framework.serializers import ListSerializer
@@ -454,30 +453,3 @@ class DonationSerializer(serializers.ModelSerializer):
     @staticmethod
     def validate_iban(value):
         return re.sub(r'[\s]', '', value)
-
-
-class UserSerializer(djoser_serializers.UserSerializer):
-    locked = serializers.SerializerMethodField()
-
-    class Meta(djoser_serializers.UserSerializer.Meta):
-        fields = tuple(User.REQUIRED_FIELDS) + (
-            User.USERNAME_FIELD,
-            'dyn',
-            'limit_domains',
-            'locked',
-        )
-        read_only_fields = ('dyn', 'limit_domains', 'locked',)
-
-    @staticmethod
-    def get_locked(obj):
-        return bool(obj.locked)
-
-
-class UserCreateSerializer(djoser_serializers.UserCreateSerializer):
-
-    class Meta(djoser_serializers.UserCreateSerializer.Meta):
-        fields = tuple(User.REQUIRED_FIELDS) + (
-            User.USERNAME_FIELD,
-            'password',
-            'dyn',
-        )

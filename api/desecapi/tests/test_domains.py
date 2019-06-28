@@ -8,7 +8,7 @@ from rest_framework import status
 
 from desecapi.models import Domain
 from desecapi.pdns_change_tracker import PDNSChangeTracker
-from desecapi.tests.base import DesecTestCase, DomainOwnerTestCase, LockedDomainOwnerTestCase
+from desecapi.tests.base import DesecTestCase, DomainOwnerTestCase
 
 
 class UnauthenticatedDomainTests(DesecTestCase):
@@ -278,56 +278,6 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
         self.assertEqual(response.data['minimum_ttl'], settings.MINIMUM_TTL_DEFAULT)
 
 
-class LockedDomainOwnerTestCase1(LockedDomainOwnerTestCase):
-
-    def test_create_domains(self):
-        name = self.random_domain_name()
-        with self.assertPdnsRequests(self.requests_desec_domain_creation(name)):
-            self.assertStatus(
-                self.client.post(self.reverse('v1:domain-list'), {'name': name}),
-                status.HTTP_201_CREATED
-            )
-
-    def test_update_domains(self):
-        url = self.reverse('v1:domain-detail', name=self.my_domain.name)
-        name = self.random_domain_name()
-
-        for method in [self.client.patch, self.client.put]:
-            with PDNSChangeTracker():
-                response = method(url, {'name': name})
-                self.assertStatus(response, status.HTTP_400_BAD_REQUEST)  # TODO fix docs, consider to change code
-
-        with self.assertPdnsRequests(self.requests_desec_domain_deletion(name=self.my_domain.name)):
-            response = self.client.delete(url)
-            self.assertStatus(response, status.HTTP_204_NO_CONTENT)
-
-    def test_create_rr_sets(self):
-        data = {'records': ['1.2.3.4'], 'ttl': 60, 'type': 'A'}
-        response = self.client.post_rr_set(self.my_domain.name, **data)
-        self.assertStatus(response, status.HTTP_403_FORBIDDEN)
-
-    def test_update_rr_sets(self):
-        type_ = 'A'
-        for subname in ['', '*', 'asdf', 'asdf.adsf.asdf']:
-            data = {'records': ['1.2.3.4'], 'ttl': 60}
-            response = self.client.put_rr_set(self.my_domain.name, subname, type_, data)
-            self.assertStatus(response, status.HTTP_403_FORBIDDEN)
-
-            for patch_request in [
-                {'records': ['1.2.3.4'], 'ttl': 60},
-                {'records': [], 'ttl': 60},
-                {'records': []},
-                {'ttl': 60},
-                {},
-            ]:
-                response = self.client.patch_rr_set(self.my_domain.name, subname, type_, patch_request)
-                self.assertStatus(response, status.HTTP_403_FORBIDDEN)
-
-            # Try DELETE
-            response = self.client.delete_rr_set(self.my_domain.name, subname, type_)
-            self.assertStatus(response, status.HTTP_403_FORBIDDEN)
-
-
 class AutoDelegationDomainOwnerTests(DomainOwnerTestCase):
     DYN = True
 
@@ -361,15 +311,6 @@ class AutoDelegationDomainOwnerTests(DomainOwnerTestCase):
                 self.assertTrue(self.token.key in email)
                 self.assertFalse(self.user.plain_password in email)
 
-    def test_create_regular_domains(self):
-        for name in [
-            self.random_domain_name(),
-            'very.long.domain.' + self.random_domain_name()
-        ]:
-            response = self.client.post(self.reverse('v1:domain-list'), {'name': name})
-            self.assertStatus(response, status.HTTP_409_CONFLICT)
-            self.assertEqual(response.data['code'], 'domain-illformed')
-
     def test_domain_limit(self):
         url = self.reverse('v1:domain-list')
         user_quota = settings.LIMIT_USER_DOMAIN_COUNT_DEFAULT - self.NUM_OWNED_DOMAINS
@@ -392,21 +333,3 @@ class AutoDelegationDomainOwnerTests(DomainOwnerTestCase):
             response = self.client.post(url, {'name': name})
         self.assertStatus(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['minimum_ttl'], 60)
-
-
-class LockedAutoDelegationDomainOwnerTests(LockedDomainOwnerTestCase):
-    DYN = True
-
-    def test_create_domain(self):
-        name = self.random_domain_name(suffix=self.AUTO_DELEGATION_DOMAINS)
-        with self.assertPdnsRequests(self.requests_desec_domain_creation_auto_delegation(name)):
-            self.assertStatus(
-                self.client.post(self.reverse('v1:domain-list'), {'name': name}),
-                status.HTTP_201_CREATED
-            )
-
-    def test_create_rrset(self):
-        self.assertStatus(
-            self.client.post_rr_set(self.my_domain.name, type='A', records=['1.1.1.1']),
-            status.HTTP_403_FORBIDDEN
-        )

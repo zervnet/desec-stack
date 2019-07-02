@@ -16,7 +16,9 @@ import base64
 import json
 import re
 import time
+from unittest import mock
 
+from api import settings
 from django.core import mail
 from django.test import override_settings
 from rest_framework import status
@@ -717,3 +719,35 @@ class VerifySerializerTestCase(DesecTestCase):
 
         self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
         self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
+
+    def test_expired(self):
+        mock_time = mock.Mock()
+
+        @mock.patch('time.time', mock_time)
+        def _construct_expired_serializer_data(data):
+            return VerifySerializer(data).data
+
+        def _run(delay):
+            mock_time.return_value = time.time() - settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE + delay
+
+            data = {'user': self.user, 'action': 'register'}
+            serializer_data = _construct_expired_serializer_data(data)
+            serializer = VerifySerializer(data=serializer_data)
+
+            if delay >= 0:
+                serializer.is_valid(raise_exception=True)
+                return True
+            else:
+                with self.assertRaises(ValidationError) as cm:
+                    serializer.is_valid(raise_exception=True)
+                self.assertEqual(cm.exception.detail['timestamp'][0].code, 'invalid')
+                self.assertEqual(cm.exception.detail['timestamp'][0], 'Expired.')
+                return False
+
+        failed_delays = set()
+        for delay in [-1, 0, 1]:
+            success = _run(delay)
+            if not success:
+                failed_delays.add(delay)
+
+        self.assertEquals(failed_delays, {-1})

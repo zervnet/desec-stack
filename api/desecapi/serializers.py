@@ -3,6 +3,7 @@ import pickle
 import re
 import time
 
+from api import settings
 from django.contrib.auth import authenticate
 from django.core.signing import Signer
 from django.core.validators import MinValueValidator
@@ -556,7 +557,7 @@ class VerifySerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
     password = serializers.CharField(required=False, trim_whitespace=False)
     signature = serializers.CharField()
-    timestamp = serializers.IntegerField(required=False)
+    timestamp = serializers.IntegerField()
 
     def sign(self, instance):
         return sign(instance, state_attributes={'user': ['is_active', 'email', 'password']})
@@ -602,6 +603,11 @@ class VerifySerializer(serializers.Serializer):
             raise serializers.ValidationError(detail=message_dict)
 
         return attrs
+
+    def validate_timestamp(self, value):
+        if value + settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE < int(time.time()):
+            raise serializers.ValidationError('Expired.')
+        return value
 
     @property
     def validated_user(self):

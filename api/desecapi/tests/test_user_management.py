@@ -51,11 +51,8 @@ class UserManagementClient(APIClient):
             'email': email,
         })
 
-    def change_email(self, token, password, new_email):
-        return self.post(reverse('v1:account-change-email'), {
-            'password': password,
-            'new_email': new_email,
-        }, HTTP_AUTHORIZATION='Token {}'.format(token))
+    def change_email(self, token, **payload):
+        return self.post(reverse('v1:account-change-email'), payload, HTTP_AUTHORIZATION='Token {}'.format(token))
 
     def delete_account(self, token, password):
         return self.post(reverse('v1:account-delete'), {
@@ -94,7 +91,7 @@ class UserManagementTestCase(DesecTestCase):
         return self.client.reset_password(email)
 
     def change_email(self, password, new_email):
-        return self.client.change_email(self.token, password, new_email)
+        return self.client.change_email(self.token, password=password, new_email=new_email)
 
     def delete_account(self, token, password):
         return self.client.delete_account(token, password)
@@ -511,6 +508,14 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_change_email(self):
         self._test_change_email(self.password)
+
+    def test_change_email_requires_password(self):
+        # Make sure that the account's email address cannot be changed with a token alone (password required)
+        new_email = self.random_username()
+        response = self.client.change_email(self.token, new_email=new_email)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['password'][0].code, 'required')
+        self.assertNoEmailSent()
 
     def test_change_email_multiple_times(self):
         for _ in range(3):

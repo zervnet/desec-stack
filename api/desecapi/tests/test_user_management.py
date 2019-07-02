@@ -638,6 +638,14 @@ class VerifySerializerTestCase(DesecTestCase):
 
         self.assertTrue(len(set(signatures)) == len(secrets))
 
+    def test_missing_fields(self):
+        serializer = VerifySerializer(data={})
+        with self.assertRaises(ValidationError) as cm:
+            serializer.is_valid(raise_exception=True)
+        self.assertTrue(all(all(item.code == 'required' for item in field_detail)
+                            for field_detail in cm.exception.detail.values()))
+        self.assertEqual(cm.exception.detail.keys(), {'action', 'user', 'signature', 'timestamp'})
+
     def test_fake_action(self):
         data = {'user': self.user, 'action': 'register'}
         serializer_data = VerifySerializer(data).data

@@ -62,9 +62,8 @@ class UserManagementClient(APIClient):
             'password': password
         }, HTTP_AUTHORIZATION='Token {}'.format(token))
 
-    def view_account(self, email, password):
-        # TODO Add token
-        return self.get(reverse('v1:account'))
+    def view_account(self, token):
+        return self.get(reverse('v1:account'), HTTP_AUTHORIZATION='Token {}'.format(token))
 
     def verify(self, verification_code, **kwargs):
         data = json.loads(base64.urlsafe_b64decode(verification_code.encode()).decode())
@@ -465,6 +464,14 @@ class HasUserAccountTestCase(UserManagementTestCase):
     def _finish_delete_account(self, verification_code):
         self.assertDeleteAccountVerificationSuccessResponse(self.verify(verification_code))
         self.assertUserDoesNotExist(self.email)
+
+    def test_view_account(self):
+        response = self.client.view_account(self.token)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue('created' in response.data)
+        self.assertEqual(response.data['email'], self.email)
+        self.assertEqual(response.data['id'], User.objects.get(email=self.email).pk)
+        self.assertEqual(response.data['limit_domains'], settings.LIMIT_USER_DOMAIN_COUNT_DEFAULT)
 
     def test_reset_password(self):
         self._test_reset_password(self.email)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import logging
 import random
 import time
 import uuid
@@ -19,6 +20,9 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException
 
 from desecapi import pdns
+
+
+logger = logging.getLogger(__name__)
 
 
 def validate_lower(value):
@@ -150,6 +154,7 @@ class User(AbstractBaseUser):
                              content_tmpl.render(context),
                              from_tmpl.render(context),
                              [recipient])
+        logger.warn('Sending email for user account %s (reason: %s)', str(self.pk), reason)
         email.send()
 
 

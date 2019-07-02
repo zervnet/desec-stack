@@ -15,12 +15,10 @@ This involves testing five separate endpoints:
 import base64
 import json
 import re
-from datetime import timedelta
 import time
 
 from django.core import mail
 from django.test import override_settings
-from django.utils.datetime_safe import datetime
 from rest_framework import status
 from rest_framework.reverse import reverse
 from rest_framework.serializers import ValidationError
@@ -58,7 +56,6 @@ class UserManagementClient(APIClient):
         }, HTTP_AUTHORIZATION='Token {}'.format(token))
 
     def delete_account(self, token, password):
-        # TODO Add token
         return self.post(reverse('v1:account-delete'), {
             'password': password
         }, HTTP_AUTHORIZATION='Token {}'.format(token))
@@ -78,22 +75,6 @@ class UserManagementTestCase(DesecTestCase):
     client_class = UserManagementClient
 
     def _generate_invitation(self):
-        # TODO fill in
-        pass
-
-    def _generate_registration_validation_code(self, email, new_email, expiry_time=None):
-        # TODO fill in
-        pass
-
-    def _generate_change_email_validation_code(self, email, new_email, expiry_time=None):
-        # TODO fill in
-        pass
-
-    def _generate_reset_password_validation_code(self, email, new_password, expiry_time=None):
-        # TODO fill in
-        pass
-
-    def _generate_delete_account_validation_code(self, email, expiry_time=None):
         # TODO fill in
         pass
 
@@ -285,7 +266,6 @@ class UserManagementTestCase(DesecTestCase):
     def assertChangeEmailVerificationSuccessResponse(self, response):
         return self.assertContains(
             response=response,
-            # TODO improve message (currently sounds like uesr has been logged out)
             text="Success! Your email address has been changed.",
             status_code=status.HTTP_200_OK
         )
@@ -426,100 +406,12 @@ class OtherUserAccountTestCase(UserManagementTestCase):
         super().setUp()
         self.other_email, self.other_password = self._test_registration()
 
-    def xtest_change_email_wrong_password(self):
-        ### We have token authorization here, and the signature from the confirmation email. Need password?
-        self.assert401InvalidPasswordResponse(
-            response=self.change_email(self.random_password(), self.random_username())
-        )
-        self.assertNoEmailSent()
-        self.assertPassword(self.other_email, self.other_password)
-
     def test_reset_password_unknown_user(self):
         # TODO this does not account for timing side-channel information
         self.assertResetPasswordSuccessResponse(
             response=self.reset_password(self.random_username())
         )
         self.assertNoEmailSent()
-
-    def xtest_reset_password_spam_protection(self):
-        self.assertResetPasswordSuccessResponse(
-            response=self.reset_password(self.other_email)
-        )
-        self.assertResetPasswordEmail(self.other_email)
-        for _ in range(5):
-            self.assertResetPasswordSuccessResponse(
-                response=self.reset_password(self.other_email)
-            )
-            self.assertNoEmailSent()
-
-    def xtest_delete_account_wrong_password(self):
-        ### We have token authorization here, and the signature from the confirmation email. Need password?
-        self.assert401InvalidPasswordResponse(
-            response=self.delete_account(self.other_email, self.random_password())
-        )
-        self.assertNoEmailSent()
-        self.assertPassword(self.other_email, self.other_password)
-
-    def xtest_delete_account_unknown_user(self):
-        self.assert401InvalidPasswordResponse(
-            response=self.delete_account(self.random_username(), self.other_password)
-        )
-        self.assertNoEmailSent()
-        self.assertPassword(self.other_email, self.other_password)
-
-    def xtest_verify_registration(self):
-        # TODO what to do if token expired and account wasn't activated?
-        just_passed = datetime.now() - timedelta(seconds=1)
-        for verification_code in [
-            'something smart here',  # TODO make it actually smart
-            'fake verification code',
-            self._generate_registration_validation_code(self.random_username(), just_passed),
-        ]:
-            self.assertVerificationFailureInvalidCodeResponse(
-                self.verify(verification_code, new_password=self.random_password()))
-            self.assertNoEmailSent()
-            self.assertPassword(self.other_email, self.other_password)
-
-    def xtest_verify_change_other_password(self):
-        just_passed = datetime.now() - timedelta(seconds=1)
-        new_password = self.random_password()
-        for verification_code in [
-            'something smart here',  # TODO make it actually smart
-            'fake verification code',
-            self._generate_reset_password_validation_code(self.other_email, new_password, just_passed),
-            self._generate_reset_password_validation_code(self.random_username(), new_password),
-        ]:
-            self.assertVerificationFailureInvalidCodeResponse(
-                self.verify(verification_code, new_password=self.random_password()))
-            self.assertNoEmailSent()
-            self.assertPassword(self.other_email, self.other_password)
-
-    def xtest_verify_change_other_email(self):
-        just_passed = datetime.now() - timedelta(seconds=1)
-        new_email = self.random_username()
-        for verification_code in [
-            'something smart here',  # TODO make it actually smart
-            'fake verification code',
-            self._generate_change_email_validation_code(self.other_email, new_email, expiry_time=just_passed),
-            self._generate_change_email_validation_code(self.random_username(), new_email),
-        ]:
-            self.assertVerificationFailureInvalidCodeResponse(
-                self.verify(verification_code))
-            self.assertNoEmailSent()
-            self.assertUserExists(self.other_email)
-
-    def xtest_verify_delete_other_account(self):
-        just_passed = datetime.now() - timedelta(seconds=1)
-        for verification_code in [
-            'something smart here',  # TODO make it actually smart
-            'fake verification code',
-            self._generate_delete_account_validation_code(self.other_email, expiry_time=just_passed),
-            self._generate_delete_account_validation_code(self.random_username()),
-        ]:
-            self.assertVerificationFailureInvalidCodeResponse(
-                self.verify(verification_code))
-            self.assertNoEmailSent()
-            self.assertUserExists(self.other_email)
 
 
 class HasUserAccountTestCase(UserManagementTestCase):

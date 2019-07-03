@@ -78,18 +78,7 @@ class DomainList(ListCreateAPIView):
         return Domain.objects.filter(owner=self.request.user.pk)
 
     def perform_create(self, serializer):
-        # Create domain
-        with PDNSChangeTracker():
-            domain = serializer.save(owner=self.request.user)
-
-        # Autodelegation
-        parent_domain_name = domain.partition_name()[1]
-        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
-            parent_domain = Domain.objects.get(name=parent_domain_name)
-            # NOTE we need two change trackers here, as the first transaction must be committed to
-            # pdns in order to have keys available for the delegation
-            with PDNSChangeTracker():
-                parent_domain.update_delegation(domain)
+        domain = serializer.save(owner=self.request.user)
 
         # Send dyn email
         if domain.name.endswith('.dedyn.io'):

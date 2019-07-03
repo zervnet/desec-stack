@@ -16,6 +16,7 @@ from rest_framework.validators import UniqueTogetherValidator
 
 from api import settings
 from desecapi.models import Domain, Donation, User, RRset, Token, RR
+from desecapi.pdns_change_tracker import PDNSChangeTracker
 
 
 class TokenSerializer(serializers.ModelSerializer):
@@ -488,6 +489,22 @@ class DomainSerializer(serializers.ModelSerializer):
             msg = 'You reached the maximum number of domains allowed for your account.'
             raise serializers.ValidationError(msg, code='domain-limit')
         return attrs
+
+    def create(self, validated_data):
+        # Create domain
+        with PDNSChangeTracker():
+            domain = super().create(validated_data)
+
+        # Autodelegation
+        parent_domain_name = domain.partition_name()[1]
+        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
+            parent_domain = Domain.objects.get(name=parent_domain_name)
+            # NOTE we need two change trackers here, as the first transaction must be committed to
+            # pdns in order to have keys available for the delegation
+            with PDNSChangeTracker():
+                parent_domain.update_delegation(domain)
+
+        return domain
 
 
 class DonationSerializer(serializers.ModelSerializer):

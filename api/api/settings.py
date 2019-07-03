@@ -123,9 +123,6 @@ EMAIL_USE_TLS = True
 DEFAULT_FROM_EMAIL = 'deSEC <support@desec.io>'
 ADMINS = [(address.split("@")[0], address) for address in os.environ['DESECSTACK_API_ADMIN'].split()]
 
-# use our own user model
-AUTH_USER_MODEL = 'desecapi.User'
-
 # default NS records
 DEFAULT_NS = [name + '.' for name in os.environ['DESECSTACK_NS'].strip().split()]
 DEFAULT_NS_TTL = os.environ['DESECSTACK_NSLORD_DEFAULT_TTL']
@@ -150,17 +147,19 @@ SEPA = {
     'CREDITOR_NAME': os.environ['DESECSTACK_API_SEPA_CREDITOR_NAME'],
 }
 
-# user management and abuse protection
+# user management
 MINIMUM_TTL_DEFAULT = int(os.environ['DESECSTACK_MINIMUM_TTL_DEFAULT'])
+AUTH_USER_MODEL = 'desecapi.User'
 ABUSE_BY_REMOTE_IP_PERIOD_HRS = 48
 LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5
 VALIDITY_PERIOD_VERIFICATION_SIGNATURE = 60 * 60 * 1
+ABUSE_BY_REMOTE_IP_PERIOD_HRS = 48
 
 if DEBUG and not EMAIL_HOST:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
 
 if os.environ.get('DESECSTACK_E2E_TEST', "").upper() == "TRUE":
     DEBUG = True
-    EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'
-    ABUSE_BY_REMOTE_IP_PERIOD_HRS = 0
     LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5000
+    ABUSE_BY_REMOTE_IP_PERIOD_HRS = 0
+    EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'

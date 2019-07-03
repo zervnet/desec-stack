@@ -3,9 +3,8 @@ import binascii
 import json
 
 import django.core.exceptions
-import psl_dns
+from django.contrib.auth import user_logged_in
 from django.core.mail import EmailMessage
-from django.db.models import Q
 from django.db.transaction import atomic
 from django.http import Http404
 from django.template.loader import get_template
@@ -75,62 +74,32 @@ class TokenViewSet(IdempotentDestroy,
 class DomainList(ListCreateAPIView):
     serializer_class = serializers.DomainSerializer
     permission_classes = (IsAuthenticated, IsOwner,)
-    psl = psl_dns.PSL(resolver=settings.PSL_RESOLVER)
 
     def get_queryset(self):
         return Domain.objects.filter(owner=self.request.user.pk)
 
-    def perform_create(self, serializer):
-        domain_name = serializer.validated_data['name']
+    def create(self, request, *args, **kwargs):
+        # Check user's domain limit
+        if (request.user.limit_domains is not None and
+                request.user.domains.count() >= request.user.limit_domains):
+            msg = 'You reached the maximum number of domains allowed for your account.'
+            raise PermissionDenied(msg, code='domain-limit')
 
-        # Check if domain is a public suffix
+        # Create domain
         try:
-            public_suffix = self.psl.get_public_suffix(domain_name)
-            is_public_suffix = self.psl.is_public_suffix(domain_name)
-        except psl_dns.exceptions.UnsupportedRule as e:
-            # It would probably be fine to just create the domain (with the TLD acting as the
-            # public suffix and setting both public_suffix and is_public_suffix accordingly).
-            # However, in order to allow to investigate the situation, it's better not catch
-            # this exception. Our error handler turns it into a 503 error and makes sure
-            # admins are notified.
+            return super().create(request, *args, **kwargs)
+        except ValidationError as e:
+            name_detail = e.detail.get('name', [])
+            if 'name-unavailable' in [detail.code for detail in name_detail]:
+                e.status_code = status.HTTP_409_CONFLICT
             raise e
 
-        is_restricted_suffix = is_public_suffix and domain_name not in settings.LOCAL_PUBLIC_SUFFIXES
-
-        # Generate a list of all domains connecting this one and its public suffix.
-        # If another user owns a zone with one of these names, then the requested
-        # domain is unavailable because it is part of the other user's zone.
-        private_components = domain_name.rsplit(public_suffix, 1)[0].rstrip('.')
-        private_components = private_components.split('.') if private_components else []
-        private_components += [public_suffix]
-        private_domains = ['.'.join(private_components[i:]) for i in range(0, len(private_components) - 1)]
-        assert is_public_suffix or domain_name == private_domains[0]
-
-        # Deny registration for non-local public suffixes and for domains covered by other users' zones
-        queryset = Domain.objects.filter(Q(name__in=private_domains) & ~Q(owner=self.request.user))
-        if is_restricted_suffix or queryset.exists():
-            ex = ValidationError(detail={"detail": "This domain name is unavailable.", "code": "domain-unavailable"})
-            ex.status_code = status.HTTP_409_CONFLICT
-            raise ex
-
-        if (self.request.user.limit_domains is not None and
-                self.request.user.domains.count() >= self.request.user.limit_domains):
-            ex = ValidationError(detail={
-                "detail": "You reached the maximum number of domains allowed for your account.",
-                "code": "domain-limit"
-            })
-            ex.status_code = status.HTTP_403_FORBIDDEN
-            raise ex
-
-        parent_domain_name = Domain.partition_name(domain_name)[1]
-        domain_is_local = parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES
+    def perform_create(self, serializer):
         try:
             with PDNSChangeTracker():
-                domain_kwargs = {'owner': self.request.user}
-                if domain_is_local:
-                    domain_kwargs['minimum_ttl'] = 60
-                domain = serializer.save(**domain_kwargs)
-            if domain_is_local:
+                domain = serializer.save(owner=self.request.user)
+            parent_domain_name = domain.partition_name()[1]
+            if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
                 parent_domain = Domain.objects.get(name=parent_domain_name)
                 # NOTE we need two change trackers here, as the first transaction must be committed to
                 # pdns in order to have keys available for the delegation
@@ -141,12 +110,12 @@ class DomainList(ListCreateAPIView):
                 raise e
             ex = ValidationError(detail={
                 "detail": "This domain name is unavailable.",
-                "code": "domain-unavailable"}
+                "code": "name-unavailable"}
             )
             ex.status_code = status.HTTP_400_BAD_REQUEST
             raise ex
 
-        def send_dyn_dns_email():
+        def send_dyn_dns_email(domain_name):
             content_tmpl = get_template('emails/domain-dyndns/content.txt')
             subject_tmpl = get_template('emails/domain-dyndns/subject.txt')
             from_tmpl = get_template('emails/from.txt')
@@ -163,7 +132,7 @@ class DomainList(ListCreateAPIView):
             email.send()
 
         if domain.name.endswith('.dedyn.io'):
-            send_dyn_dns_email()
+            send_dyn_dns_email(serializer.validated_data['name'])
 
 
 class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):

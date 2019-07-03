@@ -3,17 +3,18 @@ import pickle
 import re
 import time
 
-from api import settings
 from django.contrib.auth import authenticate
 from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
 from django.utils.crypto import constant_time_compare
+import psl_dns
 from rest_framework import serializers
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator
 
+from api import settings
 from desecapi.models import Domain, Donation, User, RRset, Token, RR
 
 
@@ -430,6 +431,7 @@ class RRsetListSerializer(ListSerializer):
 
 
 class DomainSerializer(serializers.ModelSerializer):
+    psl = psl_dns.PSL(resolver=settings.PSL_RESOLVER)
 
     class Meta:
         model = Domain
@@ -444,6 +446,39 @@ class DomainSerializer(serializers.ModelSerializer):
         fields = super().get_fields()
         fields['name'].validators.append(ReadOnlyOnUpdateValidator())
         return fields
+
+    def validate_name(self, value):
+        # Check if domain is a public suffix
+        try:
+            public_suffix = self.psl.get_public_suffix(value)
+            is_public_suffix = self.psl.is_public_suffix(value)
+        except psl_dns.exceptions.UnsupportedRule as e:
+            # It would probably be fine to just create the domain (with the TLD acting as the
+            # public suffix and setting both public_suffix and is_public_suffix accordingly).
+            # However, in order to allow to investigate the situation, it's better not catch
+            # this exception. Our error handler turns it into a 503 error and makes sure
+            # admins are notified.
+            raise e
+
+        is_restricted_suffix = is_public_suffix and value not in settings.LOCAL_PUBLIC_SUFFIXES
+
+        # Generate a list of all domains connecting this one and its public suffix.
+        # If another user owns a zone with one of these names, then the requested
+        # domain is unavailable because it is part of the other user's zone.
+        private_components = value.rsplit(public_suffix, 1)[0].rstrip('.')
+        private_components = private_components.split('.') if private_components else []
+        private_components += [public_suffix]
+        private_domains = ['.'.join(private_components[i:]) for i in range(0, len(private_components) - 1)]
+        assert is_public_suffix or value == private_domains[0]
+
+        # Deny registration for non-local public suffixes and for domains covered by other users' zones
+        request = self.context['request']
+        queryset = Domain.objects.filter(Q(name__in=private_domains) & ~Q(owner=request.user))
+        if is_restricted_suffix or queryset.exists():
+            msg = 'This domain name is unavailable.'
+            raise serializers.ValidationError(msg, code='name-unavailable')
+
+        return value
 
 
 class DonationSerializer(serializers.ModelSerializer):

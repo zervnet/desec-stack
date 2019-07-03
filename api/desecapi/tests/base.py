@@ -18,7 +18,7 @@ from rest_framework.utils import json
 
 from api import settings
 from desecapi.models import User, Domain, Token, RRset, RR
-from desecapi.views import DomainList
+from desecapi.serializers import DomainSerializer
 
 
 class DesecAPIClient(APIClient):
@@ -861,7 +861,7 @@ class DomainOwnerTestCase(DesecTestCase):
 
     @staticmethod
     def _mock_is_public_suffix(name):
-        return name == DomainList.psl.get_public_suffix(name)
+        return name == DomainSerializer.psl.get_public_suffix(name)
 
     def get_psl_context_manager(self, side_effect_parameter):
         if side_effect_parameter is None:
@@ -872,11 +872,11 @@ class DomainOwnerTestCase(DesecTestCase):
         else:
             side_effect = partial(self._mock_get_public_suffix, public_suffixes=[side_effect_parameter])
 
-        return mock.patch.object(DomainList.psl, 'get_public_suffix', side_effect=side_effect)
+        return mock.patch.object(DomainSerializer.psl, 'get_public_suffix', side_effect=side_effect)
 
     def setUpMockPatch(self):
-        mock.patch.object(DomainList.psl, 'get_public_suffix', side_effect=self._mock_get_public_suffix).start()
-        mock.patch.object(DomainList.psl, 'is_public_suffix', side_effect=self._mock_is_public_suffix).start()
+        mock.patch.object(DomainSerializer.psl, 'get_public_suffix', side_effect=self._mock_get_public_suffix).start()
+        mock.patch.object(DomainSerializer.psl, 'is_public_suffix', side_effect=self._mock_is_public_suffix).start()
         self.addCleanup(mock.patch.stopall)
 
     @classmethod

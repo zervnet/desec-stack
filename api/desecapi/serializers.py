@@ -480,6 +480,15 @@ class DomainSerializer(serializers.ModelSerializer):
 
         return value
 
+    def validate(self, attrs):
+        # Check user's domain limit
+        request = self.context['request']
+        if (request.user.limit_domains is not None and
+                request.user.domains.count() >= request.user.limit_domains):
+            msg = 'You reached the maximum number of domains allowed for your account.'
+            raise serializers.ValidationError(msg, code='domain-limit')
+        return attrs
+
 
 class DonationSerializer(serializers.ModelSerializer):
 

@@ -77,22 +77,6 @@ class DomainList(ListCreateAPIView):
     def get_queryset(self):
         return Domain.objects.filter(owner=self.request.user.pk)
 
-    def create(self, request, *args, **kwargs):
-        # Check user's domain limit
-        if (request.user.limit_domains is not None and
-                request.user.domains.count() >= request.user.limit_domains):
-            msg = 'You reached the maximum number of domains allowed for your account.'
-            raise PermissionDenied(msg, code='domain-limit')
-
-        # Create domain
-        try:
-            return super().create(request, *args, **kwargs)
-        except ValidationError as e:
-            name_detail = e.detail.get('name', [])
-            if 'name-unavailable' in [detail.code for detail in name_detail]:
-                e.status_code = status.HTTP_409_CONFLICT
-            raise e
-
     def perform_create(self, serializer):
         # Create domain
         with PDNSChangeTracker():

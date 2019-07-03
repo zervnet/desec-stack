@@ -180,7 +180,7 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
     def test_create_public_suffixes(self):
         for name in self.PUBLIC_SUFFIXES:
             response = self.client.post(self.reverse('v1:domain-list'), {'name': name})
-            self.assertStatus(response, status.HTTP_409_CONFLICT)
+            self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
             self.assertEqual(response.data['name'][0].code, 'name-unavailable')
 
     def test_create_domain_under_public_suffix_with_private_parent(self):
@@ -192,7 +192,7 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
         # If amazonaws.com is owned by another user, we cannot register test.s4.amazonaws.com
         name = 'test.s4.amazonaws.com'
         response = self.client.post(self.reverse('v1:domain-list'), {'name': name})
-        self.assertStatus(response, status.HTTP_409_CONFLICT)
+        self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['name'][0].code, 'name-unavailable')
 
         # s3.amazonaws.com is a public suffix. Therefore, test.s3.amazonaws.com can be
@@ -220,8 +220,7 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
     def test_create_domain_other_parent(self):
         name = 'something.' + self.other_domain.name
         response = self.client.post(self.reverse('v1:domain-list'), {'name': name})
-        print(type(response.data), response.data)
-        self.assertStatus(response, status.HTTP_409_CONFLICT)
+        self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data['name'][0].code, 'name-unavailable')
 
     def test_create_domain_atomicity(self):
@@ -317,8 +316,8 @@ class AutoDelegationDomainOwnerTests(DomainOwnerTestCase):
                 self.assertEqual(len(mail.outbox), i + 1)
 
         response = self.client.post(url, {'name': self.random_domain_name(self.AUTO_DELEGATION_DOMAINS)})
-        self.assertStatus(response, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data['detail'].code, 'domain-limit')
+        self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['non_field_errors'][0].code, 'domain-limit')
         self.assertEqual(len(mail.outbox), user_quota)
 
     def test_domain_minimum_ttl(self):

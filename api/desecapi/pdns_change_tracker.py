@@ -131,6 +131,14 @@ class PDNSChangeTracker:
                         {
                             'name': RRset.construct_name(subname, self._domain_name),
                             'type': type_,
+                            'changetype': 'DELETE',
+                            'records': []
+                        }
+                        for type_, subname in self._deletions
+                    ] + [
+                        {
+                            'name': RRset.construct_name(subname, self._domain_name),
+                            'type': type_,
                             'ttl': RRset.objects.values_list('ttl', flat=True).get(domain__name=self._domain_name,
                                                                                    type=type_, subname=subname),
                             'changetype': 'REPLACE',
@@ -143,14 +151,6 @@ class PDNSChangeTracker:
                             ]
                         }
                         for type_, subname in (self._additions | self._modifications) - self._deletions
-                    ] + [
-                        {
-                            'name': RRset.construct_name(subname, self._domain_name),
-                            'type': type_,
-                            'changetype': 'DELETE',
-                            'records': []
-                        }
-                        for type_, subname in self._deletions
                     ]
             }
 

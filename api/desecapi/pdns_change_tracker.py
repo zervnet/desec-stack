@@ -135,7 +135,15 @@ class PDNSChangeTracker:
                             'records': []
                         }
                         for type_, subname in self._deletions
-                    ] + [
+                    ]
+            }
+
+            if data['rrsets']:
+                _pdns_patch(NSLORD, '/zones/' + self.domain_pdns_id, data)
+
+            data = {
+                'rrsets':
+                    [
                         {
                             'name': RRset.construct_name(subname, self._domain_name),
                             'type': type_,

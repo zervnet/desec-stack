@@ -321,23 +321,6 @@ class MockPDNSTestCase(APITestCase):
         return request
 
     @classmethod
-    def request_pdns_zone_create_already_exists(cls, existing_domains=None):
-        existing_domains = cls._normalize_name(existing_domains)
-
-        def request_callback(r, _, response_headers):
-            body = json.loads(r.parsed_body)
-            if not existing_domains or body['name'] in existing_domains:
-                return [422, response_headers, json.dumps({'error': 'Domain \'%s\' already exists' % body['name']})]
-            else:
-                return [200, response_headers, '']
-
-        request = cls.request_pdns_zone_create_422()
-        # noinspection PyTypeChecker
-        request['body'] = request_callback
-        request.pop('status')
-        return request
-
-    @classmethod
     def request_pdns_zone_delete(cls, name=None, ns='LORD'):
         return {
             'method': 'DELETE',

@@ -166,13 +166,6 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
             response = self.client.post(url, {'name': name})
             self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
 
-    def test_create_pdns_known_domain(self):
-        url = self.reverse('v1:domain-list')
-        name = self.random_domain_name()
-        with self.assertPdnsRequests(self.request_pdns_zone_create_already_exists(existing_domains=[name])):
-            response = self.client.post(url, {'name': name})
-            self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
-
     def test_create_domain_with_whitespace(self):
         for name in [
             ' ' + self.random_domain_name(),

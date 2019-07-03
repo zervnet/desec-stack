@@ -98,13 +98,6 @@ class DomainList(ListCreateAPIView):
         try:
             with PDNSChangeTracker():
                 domain = serializer.save(owner=self.request.user)
-            parent_domain_name = domain.partition_name()[1]
-            if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
-                parent_domain = Domain.objects.get(name=parent_domain_name)
-                # NOTE we need two change trackers here, as the first transaction must be committed to
-                # pdns in order to have keys available for the delegation
-                with PDNSChangeTracker():
-                    parent_domain.update_delegation(domain)
         except PDNSException as e:
             if not str(e).endswith(' already exists'):
                 raise e
@@ -114,6 +107,13 @@ class DomainList(ListCreateAPIView):
             )
             ex.status_code = status.HTTP_400_BAD_REQUEST
             raise ex
+        parent_domain_name = domain.partition_name()[1]
+        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
+            parent_domain = Domain.objects.get(name=parent_domain_name)
+            # NOTE we need two change trackers here, as the first transaction must be committed to
+            # pdns in order to have keys available for the delegation
+            with PDNSChangeTracker():
+                parent_domain.update_delegation(domain)
 
         def send_dyn_dns_email(domain_name):
             content_tmpl = get_template('emails/domain-dyndns/content.txt')

@@ -10,7 +10,6 @@ from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
 from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
-from rest_framework.fields import empty, SkipField, ListField, CharField
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator
@@ -34,7 +33,7 @@ class RequiredOnPartialUpdateCharField(serializers.CharField):
     This field is always required, even for partial updates (e.g. using PATCH).
     """
     def validate_empty_values(self, data):
-        if data is empty:
+        if data is serializers.empty:
             self.fail('required')
 
         return super().validate_empty_values(data)
@@ -73,19 +72,19 @@ class ReadOnlyOnUpdateValidator(Validator):
             raise serializers.ValidationError(self.message, code='read-only-on-update')
 
 
-class StringField(CharField):
+class StringField(serializers.CharField):
 
     def to_internal_value(self, data):
         return data
 
-    def run_validation(self, data=empty):
+    def run_validation(self, data=serializers.empty):
         data = super().run_validation(data)
         if not isinstance(data, str):
             raise serializers.ValidationError('Must be a string.', code='must-be-a-string')
         return data
 
 
-class RRsField(ListField):
+class RRsField(serializers.ListField):
 
     def __init__(self, **kwargs):
         super().__init__(child=StringField(), **kwargs)
@@ -162,7 +161,7 @@ class NonBulkOnlyDefault:
 
     def __call__(self):
         if self.is_many:
-            raise SkipField()
+            raise serializers.SkipField()
         if callable(self.default):
             return self.default()
         return self.default
@@ -183,7 +182,7 @@ class RRsetSerializer(ConditionalExistenceModelSerializer):
             'subname': {'required': False, 'default': NonBulkOnlyDefault('')}
         }
 
-    def __init__(self, instance=None, data=empty, domain=None, **kwargs):
+    def __init__(self, instance=None, data=serializers.empty, domain=None, **kwargs):
         if domain is None:
             raise ValueError('RRsetSerializer() must be given a domain object (to validate uniqueness constraints).')
         self.domain = domain
@@ -297,7 +296,7 @@ class RRsetListSerializer(ListSerializer):
 
         if not self.allow_empty and len(data) == 0:
             if self.parent and self.partial:
-                raise SkipField()
+                raise serializers.SkipField()
             else:
                 self.fail('empty')
 

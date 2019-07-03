@@ -470,7 +470,7 @@ class UserCreateView(generics.CreateAPIView):
                 raise e
         else:
             ip = self.request.META.get('REMOTE_ADDR')
-            user = serializer.save(is_active=False, registration_remote_ip=ip)
+            user = serializer.save(is_active=settings.USER_CREATE_VIEW_USER_IS_ACTIVE, registration_remote_ip=ip)
 
             verification_serializer_data = serializers.VerifySerializer({'action': 'register', 'user': user}).data
             user.send_email('create-user', context={

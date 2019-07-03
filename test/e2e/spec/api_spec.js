@@ -145,7 +145,7 @@ describe("API v1", function () {
                 }, {
                     headers: {'Authorization': 'Token ' + token2 }
                 }).then(function (response) {
-                    expect(response).to.have.status(204);
+                    expect(response).to.have.status(202);
                 });
             });
         });

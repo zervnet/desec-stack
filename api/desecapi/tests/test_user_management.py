@@ -33,11 +33,10 @@ from desecapi.tests.base import DesecTestCase
 
 class UserManagementClient(APIClient):
 
-    def register(self, email, password, invitation):
+    def register(self, email, password):
         return self.post(reverse('v1:register'), {
             'email': email,
             'password': password,
-            'invitation': invitation,
         })
 
     def login_user(self, email, password):
@@ -72,15 +71,10 @@ class UserManagementTestCase(DesecTestCase):
 
     client_class = UserManagementClient
 
-    def _generate_invitation(self):
-        # TODO fill in
-        pass
-
-    def register_user(self, email=None, password=None, invitation=None):
+    def register_user(self, email=None, password=None):
         email = email if email is not None else self.random_username()
         password = password if password is not None else self.random_password()
-        invitation = invitation if invitation is not None else self._generate_invitation()
-        return email, password, self.client.register(email, password, invitation)
+        return email, password, self.client.register(email, password)
 
     def login_user(self, email, password):
         response = self.client.login_user(email, password)
@@ -197,13 +191,6 @@ class UserManagementTestCase(DesecTestCase):
             status_code=status.HTTP_200_OK
         )
 
-    def assertRegistrationFailureInvitationRequiredResponse(self, response):
-        self.assertContains(
-            response=response,
-            text="Invitation only. Please contact the support to get a valid invitation.",
-            status_code=status.HTTP_401_UNAUTHORIZED
-        )
-
     def assertRegistrationFailurePasswordRequiredResponse(self, response):
         # TODO check specifically for password error
         self.assertContains(
@@ -303,8 +290,8 @@ class UserManagementTestCase(DesecTestCase):
             status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    def _test_registration(self, email=None, password=None, invitation=None):
-        email, password, response = self.register_user(email, password, invitation)
+    def _test_registration(self, email=None, password=None):
+        email, password, response = self.register_user(email, password)
         self.assertRegistrationSuccessResponse(response)
         self.assertUserExists(email)
         self.assertFalse(User.objects.get(email=email).is_active)
@@ -368,14 +355,6 @@ class NoUserAccountTestCase(UserLifeCycleTestCase):
         email, _ = self._test_registration()
         self.assertRegistrationSuccessResponse(self.register_user(email, self.random_password())[2])
         self.assertNoEmailSent()
-
-    def xtest_registration_invitation_required(self):
-        email = self.random_username()
-        self.assertRegistrationFailureInvitationRequiredResponse(
-            response=self.register_user(email=email, invitation='foobar')[2]
-        )
-        self.assertNoEmailSent()
-        self.assertUserDoesNotExist(email)
 
     def test_registration_password_required(self):
         email = self.random_username()

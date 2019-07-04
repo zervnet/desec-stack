@@ -137,7 +137,8 @@ class User(AbstractBaseUser):
 
     def send_email(self, reason, context={}, recipient=None):
         reasons = [
-            'create-user',
+            'activate',
+            'activate-with-domain',
             'change-email',
             'change-email-confirmation-old-email',
             'password-change-confirmation',

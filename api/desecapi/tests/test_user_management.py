@@ -26,17 +26,18 @@ from rest_framework.reverse import reverse
 from rest_framework.serializers import ValidationError
 from rest_framework.test import APIClient
 
-from desecapi.models import User
+from desecapi.models import Domain, User
 from desecapi.serializers import VerifySerializer
-from desecapi.tests.base import DesecTestCase
+from desecapi.tests.base import DesecTestCase, PublicSuffixMockMixin
 
 
 class UserManagementClient(APIClient):
 
-    def register(self, email, password):
+    def register(self, email, password, **kwargs):
         return self.post(reverse('v1:register'), {
             'email': email,
             'password': password,
+            **kwargs
         })
 
     def login_user(self, email, password):
@@ -67,14 +68,14 @@ class UserManagementClient(APIClient):
         return self.post(reverse('v1:verify'), data)
 
 
-class UserManagementTestCase(DesecTestCase):
+class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
 
     client_class = UserManagementClient
 
-    def register_user(self, email=None, password=None):
+    def register_user(self, email=None, password=None, **kwargs):
         email = email if email is not None else self.random_username()
         password = password if password is not None else self.random_password()
-        return email, password, self.client.register(email, password)
+        return email, password, self.client.register(email, password, **kwargs)
 
     def login_user(self, email, password):
         response = self.client.login_user(email, password)
@@ -192,10 +193,18 @@ class UserManagementTestCase(DesecTestCase):
         )
 
     def assertRegistrationFailurePasswordRequiredResponse(self, response):
-        # TODO check specifically for password error
         self.assertContains(
             response=response,
             text="This field may not be blank",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+        self.assertEqual(response.data['password'][0].code, 'blank')
+
+    def assertRegistrationFailureDomainUnavailableResponse(self, response, domain, reason):
+        self.assertContains(
+            response=response,
+            text=("The requested domain {} could not be registered (reason: {}). "
+                  "Please start over and sign up again.".format(domain, reason)),
             status_code=status.HTTP_400_BAD_REQUEST
         )
 
@@ -203,6 +212,17 @@ class UserManagementTestCase(DesecTestCase):
         return self.assertContains(
             response=response,
             text="Success! Please log in at",
+            status_code=status.HTTP_200_OK
+        )
+
+    def assertRegistrationWithDomainVerificationSuccessResponse(self, response, domain=None):
+        if domain and domain.endswith('.dedyn.io'):
+            text = 'Success! Here is the access token (= password) to configure your dynDNS client.'
+        else:
+            text = 'Success! Please check the docs for the next steps.'
+        return self.assertContains(
+            response=response,
+            text=text,
             status_code=status.HTTP_200_OK
         )
 
@@ -290,18 +310,46 @@ class UserManagementTestCase(DesecTestCase):
             status_code=status.HTTP_400_BAD_REQUEST
         )
 
-    def _test_registration(self, email=None, password=None):
-        email, password, response = self.register_user(email, password)
+    def _test_registration(self, email=None, password=None, **kwargs):
+        email, password, response = self.register_user(email, password, **kwargs)
+        self.assertRegistrationSuccessResponse(response)
+        self.assertUserExists(email)
+        self.assertFalse(User.objects.get(email=email).is_active)
+        self.assertPassword(email, password)
+        verification_code = self.assertRegistrationEmail(email)
+        self.assertRegistrationVerificationSuccessResponse(self.verify(verification_code))
+        self.assertTrue(User.objects.get(email=email).is_active)
+        self.assertPassword(email, password)
+        return email, password
+
+    def _test_registration_with_domain(self, email=None, password=None, domain=None, expect_failure_reason=None):
+        domain = domain or self.random_domain_name()
+
+        email, password, response = self.register_user(email, password, domain=domain)
         self.assertRegistrationSuccessResponse(response)
         self.assertUserExists(email)
         self.assertFalse(User.objects.get(email=email).is_active)
         self.assertPassword(email, password)
 
         verification_code = self.assertRegistrationEmail(email)
-        self.assertRegistrationVerificationSuccessResponse(self.verify(verification_code))
-        self.assertTrue(User.objects.get(email=email).is_active)
-        self.assertPassword(email, password)
-        return email, password
+        if expect_failure_reason is None:
+            if domain.endswith('.dedyn.io'):
+                cm = self.requests_desec_domain_creation_auto_delegation(domain)
+            else:
+                cm = self.requests_desec_domain_creation(domain)
+            with self.assertPdnsRequests(cm):
+                response = self.verify(verification_code)
+            self.assertRegistrationWithDomainVerificationSuccessResponse(response, domain)
+            self.assertTrue(User.objects.get(email=email).is_active)
+            self.assertPassword(email, password)
+            self.assertTrue(Domain.objects.filter(name=domain, owner__email=email).exists())
+            return email, password, domain
+        else:
+            domain_exists = Domain.objects.filter(name=domain).exists()
+            response = self.verify(verification_code)
+            self.assertRegistrationFailureDomainUnavailableResponse(response, domain, expect_failure_reason)
+            self.assertFalse(User.objects.filter(email=email).exists())
+            self.assertEqual(Domain.objects.filter(name=domain).exists(), domain_exists)
 
     def _test_login(self):
         token, response = self.login_user(self.email, self.password)
@@ -350,6 +398,18 @@ class NoUserAccountTestCase(UserLifeCycleTestCase):
 
     def test_registration(self):
         self._test_registration()
+
+    def test_registration_with_domain(self):
+        PublicSuffixMockMixin.setUpMockPatch(self)
+        with self.get_psl_context_manager('.'):
+            _, _, domain = self._test_registration_with_domain()
+            self._test_registration_with_domain(domain=domain, expect_failure_reason='unique')
+            self._test_registration_with_domain(domain='töö--', expect_failure_reason='invalid_domain_name')
+
+        with self.get_psl_context_manager('co.uk'):
+            self._test_registration_with_domain(domain='co.uk', expect_failure_reason='name_unavailable')
+        with self.get_psl_context_manager('dedyn.io'):
+            self._test_registration_with_domain(domain=self.random_domain_name(suffix='dedyn.io'))
 
     def test_registration_known_account(self):
         email, _ = self._test_registration()
@@ -640,7 +700,7 @@ class VerifySerializerTestCase(DesecTestCase):
         self.assertEqual(cm.exception.detail.keys(), {'action', 'user', 'signature', 'timestamp'})
 
     def test_fake_action(self):
-        data = {'user': self.user, 'action': 'register'}
+        data = {'user': self.user, 'action': 'activate'}
         serializer_data = VerifySerializer(data).data
 
         serializer = VerifySerializer(data=serializer_data)
@@ -682,7 +742,7 @@ class VerifySerializerTestCase(DesecTestCase):
         self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
 
     def test_fake_signature(self):
-        data = {'user': self.user, 'action': 'register'}
+        data = {'user': self.user, 'action': 'activate'}
         serializer_data = VerifySerializer(data).data
 
         serializer = VerifySerializer(data=serializer_data)
@@ -697,19 +757,25 @@ class VerifySerializerTestCase(DesecTestCase):
         self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
 
     def test_fake_user(self):
-        data = {'user': self.user, 'action': 'register'}
+        data = {'user': self.user, 'action': 'activate'}
         serializer_data = VerifySerializer(data).data
 
         serializer = VerifySerializer(data=serializer_data)
         serializer.is_valid(raise_exception=True)
 
-        serializer_data['user'] = self.create_user().pk
+        user = self.create_user()
+        serializer_data['user'] = user.pk
         serializer = VerifySerializer(data=serializer_data)
         with self.assertRaises(ValidationError) as cm:
             serializer.is_valid(raise_exception=True)
-
         self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
         self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
+
+        user.delete()
+        serializer = VerifySerializer(data=serializer_data)
+        with self.assertRaises(ValidationError) as cm:
+            serializer.is_valid(raise_exception=True)
+        self.assertEqual(cm.exception.detail['user'][0].code, 'does_not_exist')
 
     def test_expired(self):
         mock_time = mock.Mock()
@@ -721,7 +787,7 @@ class VerifySerializerTestCase(DesecTestCase):
         def _run(delay):
             mock_time.return_value = time.time() - settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE + delay
 
-            data = {'user': self.user, 'action': 'register'}
+            data = {'user': self.user, 'action': 'activate'}
             serializer_data = _construct_expired_serializer_data(data)
             serializer = VerifySerializer(data=serializer_data)
 

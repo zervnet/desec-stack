@@ -5,7 +5,6 @@ import json
 import django.core.exceptions
 from django.contrib.auth import user_logged_in
 from django.core.mail import EmailMessage
-from django.db.transaction import atomic
 from django.http import Http404
 from django.template.loader import get_template
 from rest_framework import generics
@@ -383,7 +382,7 @@ class DonationList(generics.CreateAPIView):
 
 
 class UserCreateView(generics.CreateAPIView):
-    serializer_class = serializers.UserSerializer
+    serializer_class = serializers.RegisterAccountSerializer
 
     def create(self, request, *args, **kwargs):
         # Create user and send trigger email verification.
@@ -402,12 +401,17 @@ class UserCreateView(generics.CreateAPIView):
                 raise e
         else:
             ip = self.request.META.get('REMOTE_ADDR')
-            user = serializer.save(is_active=settings.USER_CREATE_VIEW_USER_IS_ACTIVE, registration_remote_ip=ip)
+            is_active = settings.USER_CREATE_VIEW_USER_IS_ACTIVE
+            user = serializer.save(is_active=is_active, registration_remote_ip=ip)
 
-            verification_serializer_data = serializers.VerifySerializer({'action': 'register', 'user': user}).data
-            user.send_email('create-user', context={
-                'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
-            })
+            domain = serializer.validated_data.get('domain')
+            if domain or not is_active:
+                data = {'action': 'activate', 'user': user}
+                if domain:
+                    data.update({'action': 'activate-with-domain', 'domain': domain})
+                verification_serializer_data = serializers.VerifySerializer(data).data
+                verification_code = base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+                user.send_email(data['action'], context={'verification_code': verification_code})
 
         # This request is unauthenticated, so don't expose whether we did anything.
         return Response(data={'detail': 'Welcome! Please check your mailbox.'},
@@ -506,16 +510,43 @@ class AccountResetPasswordView(GenericAPIView):
 class VerifyView(GenericAPIView):
     serializer_class = serializers.VerifySerializer
 
-    @atomic
+    @atomic  # Do not change state in case of error, so that signature remains valid and user can try again
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+        serializer.is_valid(raise_exception=True)  # Move sig check to authentication class? Allows using request.user!
+        error_codes = []
+        try:
+            user = serializer.save()
+        except ValidationError as e:
+            if 'domain' in e.detail:
+                error_codes = [detail.code for detail in e.detail['domain']]
+            else:
+                raise e
 
-        details = {
-            'register': 'Success! Please log in at {}.'.format(self.request.build_absolute_uri(reverse('v1:login'))),
-            'change-email': 'Success! Your email address has been changed.',
-            'change-password': 'Success! Your password has been changed.',
-            'delete': 'All your data has been deleted. Bye bye, see you soon! <3'
-        }
-        return Response(data={'detail': details[serializer.validated_data['action']]})
+        action = serializer.validated_data['action']
+        if action == 'activate-with-domain':
+            domain_name = serializer.validated_data['domain']
+            data = {}
+            if error_codes:
+                data['detail'] = ('The requested domain {} could not be registered (reason: {}). '
+                                  'Please start over and sign up again.'.format(domain_name, ','.join(error_codes)))
+                return Response(data=data, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                domain = Domain.objects.get(owner=user, name=domain_name)
+                data['domain'] = serializers.DomainSerializer(domain).data,
+                if domain_name.endswith('.dedyn.io'):
+                    token = Token.objects.create(user=user, name='dyndns')
+                    data['detail'] = 'Success! Here is the access token (= password) to configure your dynDNS client.'
+                    data['auth_token'] = serializers.TokenSerializer(token).data['auth_token']
+                else:
+                    data['detail'] = 'Success! Please check the docs for the next steps.'
+        else:
+            details = {
+                'activate': 'Success! Please log in at {}.'.format(self.request.build_absolute_uri(reverse('v1:login'))),
+                'change-email': 'Success! Your email address has been changed.',
+                'change-password': 'Success! Your password has been changed.',
+                'delete': 'All your data has been deleted. Bye bye, see you soon! <3'
+            }
+            data = {'detail': details[action]}
+
+        return Response(data=data)

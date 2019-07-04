@@ -1,0 +1,4 @@
+TODO
+verification code: {{ verification_code }}
+welcome
+Your domain will be created once you click on this link.

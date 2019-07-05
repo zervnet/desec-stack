@@ -477,7 +477,7 @@ class DomainSerializer(serializers.ModelSerializer):
         queryset = Domain.objects.filter(Q(name__in=private_domains) & ~Q(owner=request.user))
         if is_restricted_suffix or queryset.exists():
             msg = 'This domain name is unavailable.'
-            raise serializers.ValidationError(msg, code='name-unavailable')
+            raise serializers.ValidationError(msg, code='name_unavailable')
 
         return value
 
@@ -487,7 +487,7 @@ class DomainSerializer(serializers.ModelSerializer):
         if (request.user.limit_domains is not None and
                 request.user.domains.count() >= request.user.limit_domains):
             msg = 'You reached the maximum number of domains allowed for your account.'
-            raise serializers.ValidationError(msg, code='domain-limit')
+            raise serializers.ValidationError(msg, code='domain_limit')
         return attrs
 
     def create(self, validated_data):

@@ -815,22 +815,7 @@ class DesecTestCase(MockPDNSTestCase):
             ))
 
 
-class DomainOwnerTestCase(DesecTestCase):
-    """
-    This test case creates a domain owner, some domains for her and some domains that are owned by other users.
-    DomainOwnerTestCase.client is authenticated with the owner's token.
-    """
-    DYN = False
-    NUM_OWNED_DOMAINS = 2
-    NUM_OTHER_DOMAINS = 20
-
-    owner = None
-    my_domains = None
-    other_domains = None
-    my_domain = None
-    other_domain = None
-    token = None
-
+class PublicSuffixMockMixin():
     def _mock_get_public_suffix(self, domain_name, public_suffixes=None):
         if public_suffixes is None:
             public_suffixes = settings.LOCAL_PUBLIC_SUFFIXES | self.PUBLIC_SUFFIXES
@@ -861,6 +846,23 @@ class DomainOwnerTestCase(DesecTestCase):
         mock.patch.object(DomainSerializer.psl, 'get_public_suffix', side_effect=self._mock_get_public_suffix).start()
         mock.patch.object(DomainSerializer.psl, 'is_public_suffix', side_effect=self._mock_is_public_suffix).start()
         self.addCleanup(mock.patch.stopall)
+
+
+class DomainOwnerTestCase(DesecTestCase, PublicSuffixMockMixin):
+    """
+    This test case creates a domain owner, some domains for her and some domains that are owned by other users.
+    DomainOwnerTestCase.client is authenticated with the owner's token.
+    """
+    DYN = False
+    NUM_OWNED_DOMAINS = 2
+    NUM_OTHER_DOMAINS = 20
+
+    owner = None
+    my_domains = None
+    other_domains = None
+    my_domain = None
+    other_domain = None
+    token = None
 
     @classmethod
     def setUpTestDataWithPdns(cls):
@@ -897,7 +899,7 @@ class DomainOwnerTestCase(DesecTestCase):
     def setUp(self):
         super().setUp()
         self.client.credentials(HTTP_AUTHORIZATION='Token ' + self.token.key)
-        self.setUpMockPatch()
+        PublicSuffixMockMixin.setUpMockPatch(self)
 
 
 class LockedDomainOwnerTestCase(DomainOwnerTestCase):

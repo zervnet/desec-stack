@@ -1,19 +1,16 @@
-import hashlib
-import pickle
 import re
-import time
 
+import psl_dns
 from django.contrib.auth import authenticate
-from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
-import psl_dns
 from rest_framework import serializers
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator
 
 from api import settings
+from desecapi.crypto import sign
 from desecapi.models import Domain, Donation, User, RRset, Token, RR
 from desecapi.pdns_change_tracker import PDNSChangeTracker
 
@@ -594,34 +591,6 @@ class LoginSerializer(EmailSerializer, BasePasswordSerializer):
         return attrs
 
 
-def sign(instance, state_attributes, skip_fields=[], timestamp_field='timestamp'):
-    def get_dict_repr(data):
-        PICKLE_REPR_PROTOCOL = 4
-        data_items = sorted([(str(k), str(v)) for k, v in data.items()])
-        return pickle.dumps(data_items, PICKLE_REPR_PROTOCOL)
-
-    instance = instance.copy()  ## Act on a copy of the original object
-    timestamp = None
-    if timestamp_field is not None:
-        timestamp = instance.pop(timestamp_field, int(time.time()))
-
-    payload = {k: v for (k, v) in instance.items() if k not in skip_fields}
-    objects = {}
-    state = {}
-    for object_field in state_attributes:
-        obj = payload.pop(object_field)
-        objects[object_field] = getattr(obj, 'pk')
-        state[object_field] = {attr: getattr(obj, attr) for attr in state_attributes[object_field]}
-    state = get_dict_repr(state)
-    state = hashlib.sha256(state).hexdigest()
-    payload = get_dict_repr(payload)
-    data = {'objects': objects, 'state': state, 'payload': payload, 'timestamp': timestamp}
-    instance['signature'] = Signer().signature(get_dict_repr(data))
-    if timestamp is not None:
-        instance[timestamp_field] = timestamp
-    return instance
-
-
 class VerifySerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=[
         'activate',
@@ -638,15 +607,10 @@ class VerifySerializer(serializers.Serializer):
     signature = serializers.CharField()
     timestamp = serializers.IntegerField()
 
-    @classmethod
-    def sign(cls, instance):
-        # Skip password field as it was not present at signing time
-        return sign(instance, state_attributes={'user': ['is_active', 'email', 'password']}, skip_fields=['password'])
-
     def to_representation(self, instance):
         # Having email and password at the same time is currently not a use case
         assert not (instance.get('email') and instance.get('password'))
-        signed_instance = self.sign(instance)
+        signed_instance = sign(instance)
         ret = super().to_representation(signed_instance)
         assert '@' not in str(ret['user'])  # make sure the user representation does not expose the email address
         return ret

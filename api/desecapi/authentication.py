@@ -1,7 +1,6 @@
 import base64
 import time
 
-from django.utils.crypto import constant_time_compare
 from rest_framework import exceptions, HTTP_HEADER_ENCODING
 from rest_framework.authentication import (
     BaseAuthentication,
@@ -11,7 +10,7 @@ from rest_framework.authentication import (
 
 from api import settings
 from desecapi.models import Token, User
-from desecapi.serializers import VerifySerializer
+from desecapi.crypto import verify as verify_signature
 
 
 class TokenAuthentication(RestFrameworkTokenAuthentication):
@@ -117,7 +116,6 @@ class SignatureAuthentication(BaseAuthentication):
         """
 
         data = request.data.copy()
-        expected_signature = data.pop('signature')
 
         if 'timestamp' in data:
             expiration_time = data['timestamp'] + settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE
@@ -132,9 +130,7 @@ class SignatureAuthentication(BaseAuthentication):
         except User.DoesNotExist:
             return None, None
 
-        validated_signature = VerifySerializer.sign(data)['signature']
-
-        if not constant_time_compare(validated_signature, expected_signature):
+        if not verify_signature(data):
             raise exceptions.AuthenticationFailed('Bad signature.')
 
         return data['user'], None

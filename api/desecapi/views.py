@@ -194,13 +194,6 @@ class RRsetList(DomainView, ListCreateAPIView, UpdateAPIView):
                 kwargs['many'] = True
         return super().get_serializer(domain=self.domain, *args, **kwargs)
 
-    def create(self, request, *args, **kwargs):
-        response = super().create(request, *args, **kwargs)
-        if not response.data:
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        else:
-            return response
-
     def perform_create(self, serializer):
         with PDNSChangeTracker():
             serializer.save(domain=self.domain)

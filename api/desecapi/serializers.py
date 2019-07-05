@@ -7,8 +7,6 @@ from django.contrib.auth import authenticate
 from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
-from django.db.transaction import atomic
-from django.utils.crypto import constant_time_compare
 import psl_dns
 from rest_framework import serializers
 from rest_framework.serializers import ListSerializer
@@ -474,7 +472,7 @@ class DomainSerializer(serializers.ModelSerializer):
         assert is_public_suffix or value == private_domains[0]
 
         # Deny registration for non-local public suffixes and for domains covered by other users' zones
-        owner = self.context.get('owner') or self.context['request'].user
+        owner = self.context['request'].user
         queryset = Domain.objects.filter(Q(name__in=private_domains) & ~Q(owner=owner))
         if is_restricted_suffix or queryset.exists():
             msg = 'This domain name is unavailable.'
@@ -484,7 +482,7 @@ class DomainSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         # Check user's domain limit
-        owner = self.context.get('owner') or self.context['request'].user
+        owner = self.context['request'].user
         if (owner.limit_domains is not None and
                 owner.domains.count() >= owner.limit_domains):
             msg = 'You reached the maximum number of domains allowed for your account.'
@@ -596,7 +594,7 @@ class LoginSerializer(EmailSerializer, BasePasswordSerializer):
         return attrs
 
 
-def sign(instance, state_attributes, timestamp_field='timestamp'):
+def sign(instance, state_attributes, skip_fields=[], timestamp_field='timestamp'):
     def get_dict_repr(data):
         PICKLE_REPR_PROTOCOL = 4
         data_items = sorted([(str(k), str(v)) for k, v in data.items()])
@@ -607,7 +605,7 @@ def sign(instance, state_attributes, timestamp_field='timestamp'):
     if timestamp_field is not None:
         timestamp = instance.pop(timestamp_field, int(time.time()))
 
-    payload = instance.copy()
+    payload = {k: v for (k, v) in instance.items() if k not in skip_fields}
     objects = {}
     state = {}
     for object_field in state_attributes:
@@ -640,8 +638,10 @@ class VerifySerializer(serializers.Serializer):
     signature = serializers.CharField()
     timestamp = serializers.IntegerField()
 
-    def sign(self, instance):
-        return sign(instance, state_attributes={'user': ['is_active', 'email', 'password']})
+    @classmethod
+    def sign(cls, instance):
+        # Skip password field as it was not present at signing time
+        return sign(instance, state_attributes={'user': ['is_active', 'email', 'password']}, skip_fields=['password'])
 
     def to_representation(self, instance):
         # Having email and password at the same time is currently not a use case
@@ -652,18 +652,10 @@ class VerifySerializer(serializers.Serializer):
         return ret
 
     def validate(self, attrs):
-        # First, verify signature
-        expected_signature = attrs['signature']
+        # Signature gets validated through authentication
+        self.user = self.context['request'].user if 'request' in self.context else None
 
-        validation_data = attrs.copy()
-        validation_data.pop('password', None)  # does not get signed (not known at signing time)
-        validation_data.pop('signature')  #
-        validated_signature = self.sign(validation_data)['signature']
-
-        if not constant_time_compare(validated_signature, expected_signature):
-            raise serializers.ValidationError('Bad signature.')
-
-        # Second, verify presence of expected fields only
+        # First, verify presence of expected fields only
         allowed_fields_by_action = {
             'activate': [],
             'activate-with-domain': ['domain'],
@@ -676,9 +668,18 @@ class VerifySerializer(serializers.Serializer):
         message_dict = {field: 'This field is not allowed for action {}.'.format(action)
                         for field in self.initial_data if field not in allowed_fields}
 
-        # Third, action-dependent stuff
+        # Second, action-dependent stuff
         if action == 'change-email' and User.objects.filter(email=attrs['email']).exists():
             message_dict['email'] = 'You already have another account with this email address.'
+
+        if action == 'activate-with-domain':
+            serializer = DomainSerializer(data={'name': attrs['domain']}, context=self.context)
+            try:
+                serializer.is_valid(raise_exception=True)
+            except serializers.ValidationError as e:
+                if 'name' in e.detail:
+                    e.detail['domain'] = e.detail.pop('name')
+                raise e
 
         # If necessary, raise validation error
         if message_dict:
@@ -686,44 +687,30 @@ class VerifySerializer(serializers.Serializer):
 
         return attrs
 
-    def validate_timestamp(self, value):
-        if value + settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE < int(time.time()):
-            raise serializers.ValidationError('Expired.')
-        return value
-
-    @property
-    def validated_user(self):
-        return self.validated_data['user']
-
     def _save_activate(self):
-        self.validated_user.activate()
+        self.user.activate()
 
     def _save_activate_with_domain(self):
         # Activate user
         self._save_activate()
 
         # Create domain
-        serializer = DomainSerializer(data={'name': self.validated_data['domain']},
-                                      context={'owner': self.validated_user})
+        serializer = DomainSerializer(data={'name': self.validated_data['domain']}, context=self.context)
         try:
             serializer.is_valid(raise_exception=True)
+            serializer.save(owner=self.user)
         except serializers.ValidationError as e:  # e.g. domain name unavailable
-            self.validated_user.delete()
-            if 'name' in e.detail:
-                e.detail['domain'] = e.detail.pop('name')
-            raise e
-        else:
-            serializer.save(owner=self.validated_user)
+            self.user.delete()
 
     def _save_change_email(self):
-        self.validated_user.change_email(self.validated_data['email'])
+        self.user.change_email(self.validated_data['email'])
 
     def _save_change_password(self):
         assert 'email' not in self.validated_data
-        self.validated_user.change_password(self.validated_data['password'])
+        self.user.change_password(self.validated_data['password'])
 
     def _save_delete(self):
-        self.validated_user.delete()
+        self.user.delete()
 
     def save(self):
         action_functions = {
@@ -736,4 +723,4 @@ class VerifySerializer(serializers.Serializer):
         action = self.validated_data['action']
         action_functions[action]()
 
-        return self.validated_user
+        return self.user

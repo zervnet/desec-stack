@@ -11,7 +11,7 @@ from rest_framework import generics
 from rest_framework import mixins
 from rest_framework import status
 from rest_framework.authentication import get_authorization_header
-from rest_framework.exceptions import (NotFound, PermissionDenied, ValidationError)
+from rest_framework.exceptions import (ErrorDetail, NotFound, PermissionDenied, ValidationError)
 from rest_framework.generics import (
     GenericAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, UpdateAPIView, get_object_or_404
 )
@@ -501,34 +501,39 @@ class AccountResetPasswordView(GenericAPIView):
 
 
 class VerifyView(GenericAPIView):
+    authentication_classes = (auth.SignatureAuthentication,)
     serializer_class = serializers.VerifySerializer
 
-    @atomic  # Do not change state in case of error, so that signature remains valid and user can try again
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)  # Move sig check to authentication class? Allows using request.user!
-        error_codes = []
+        domain_exception = None
         try:
-            user = serializer.save()
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
         except ValidationError as e:
-            if 'domain' in e.detail:
-                error_codes = [detail.code for detail in e.detail['domain']]
+            domain_error_codes = [detail.code for detail in e.detail.get('domain', [])]
+            if domain_error_codes:
+                if request.user:
+                    request.user.delete()
+                reason = ','.join(domain_error_codes)
+                e.detail['domain'] = ErrorDetail('The requested domain {} could not be registered (reason: {}). '
+                                                 'Please start over and sign up again.').format('{}', reason)
+                domain_exception = e
             else:
                 raise e
 
-        action = serializer.validated_data['action']
+        action = request.data['action']  # TODO avoid using request.data
         if action == 'activate-with-domain':
-            domain_name = serializer.validated_data['domain']
+            domain_name = request.data['domain']  # TODO avoid using request.data
             data = {}
-            if error_codes:
-                data['detail'] = ('The requested domain {} could not be registered (reason: {}). '
-                                  'Please start over and sign up again.'.format(domain_name, ','.join(error_codes)))
-                return Response(data=data, status=status.HTTP_400_BAD_REQUEST)
+            if domain_exception:
+                domain_exception.detail['domain'] = domain_exception.detail['domain'].format(domain_name)
+                raise domain_exception
             else:
-                domain = Domain.objects.get(owner=user, name=domain_name)
+                domain = Domain.objects.get(owner=request.user, name=domain_name)
                 data['domain'] = serializers.DomainSerializer(domain).data,
                 if domain_name.endswith('.dedyn.io'):
-                    token = Token.objects.create(user=user, name='dyndns')
+                    token = Token.objects.create(user=request.user, name='dyndns')
                     data['detail'] = 'Success! Here is the access token (= password) to configure your dynDNS client.'
                     data['auth_token'] = serializers.TokenSerializer(token).data['auth_token']
                 else:

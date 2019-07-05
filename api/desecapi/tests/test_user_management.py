@@ -300,7 +300,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         return self.assertContains(
             response=response,
             text="Bad signature.",
-            status_code=status.HTTP_400_BAD_REQUEST
+            status_code=status.HTTP_403_FORBIDDEN
         )
 
     def assertVerificationFailureUnknownUserResponse(self, response):
@@ -348,7 +348,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
             domain_exists = Domain.objects.filter(name=domain).exists()
             response = self.verify(verification_code)
             self.assertRegistrationFailureDomainUnavailableResponse(response, domain, expect_failure_reason)
-            self.assertFalse(User.objects.filter(email=email).exists())
+            self.assertUserDoesNotExist(email)
             self.assertEqual(Domain.objects.filter(name=domain).exists(), domain_exists)
 
     def _test_login(self):
@@ -712,93 +712,61 @@ class VerifySerializerTestCase(DesecTestCase):
             serializer.is_valid(raise_exception=True)
 
     def test_fake_email(self):
-        data = {'user': self.user, 'action': 'change-email', 'email': self.random_username()}
-        serializer_data = VerifySerializer(data).data
-
-        serializer = VerifySerializer(data=serializer_data)
-        serializer.is_valid(raise_exception=True)
-
-        serializer_data['email'] = self.random_username()
-        serializer = VerifySerializer(data=serializer_data)
-        with self.assertRaises(ValidationError) as cm:
-            serializer.is_valid(raise_exception=True)
-
-        self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
-        self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
+        data = VerifySerializer({'user': self.user, 'action': 'change-email', 'email': self.random_username()}).data
+        data['email'] = self.random_username()
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
     def test_fake_timestamp(self):
-        data = {'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}
-        serializer_data = VerifySerializer(data).data
+        data = VerifySerializer({'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}).data
+        data['timestamp'] += 1
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
-        serializer = VerifySerializer(data=serializer_data)
-        serializer.is_valid(raise_exception=True)
-
-        serializer_data['timestamp'] += 1
-        serializer = VerifySerializer(data=serializer_data)
-        with self.assertRaises(ValidationError) as cm:
-            serializer.is_valid(raise_exception=True)
-
-        self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
-        self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
+        data['timestamp'] -= 1  # Back to normal
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_200_OK)
 
     def test_fake_signature(self):
-        data = {'user': self.user, 'action': 'activate'}
-        serializer_data = VerifySerializer(data).data
-
-        serializer = VerifySerializer(data=serializer_data)
-        serializer.is_valid(raise_exception=True)
-
-        serializer_data['signature'] = serializer_data['signature'][::-1]  # Reverse
-        serializer = VerifySerializer(data=serializer_data)
-        with self.assertRaises(ValidationError) as cm:
-            serializer.is_valid(raise_exception=True)
-
-        self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
-        self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
+        data = VerifySerializer({'user': self.user, 'action': 'activate'}).data
+        data['signature'] = data['signature'][::-1]  # Reverse
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
     def test_fake_user(self):
-        data = {'user': self.user, 'action': 'activate'}
-        serializer_data = VerifySerializer(data).data
+        fake_user = self.create_user()
+        data = VerifySerializer({'user': self.user, 'action': 'activate'}).data
+        data['user'] = fake_user.pk
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
-        serializer = VerifySerializer(data=serializer_data)
-        serializer.is_valid(raise_exception=True)
-
-        user = self.create_user()
-        serializer_data['user'] = user.pk
-        serializer = VerifySerializer(data=serializer_data)
-        with self.assertRaises(ValidationError) as cm:
-            serializer.is_valid(raise_exception=True)
-        self.assertEqual(cm.exception.detail['non_field_errors'][0].code, 'invalid')
-        self.assertEqual(cm.exception.detail['non_field_errors'][0], 'Bad signature.')
-
-        user.delete()
-        serializer = VerifySerializer(data=serializer_data)
-        with self.assertRaises(ValidationError) as cm:
-            serializer.is_valid(raise_exception=True)
-        self.assertEqual(cm.exception.detail['user'][0].code, 'does_not_exist')
+        fake_user.delete()
+        response = self.client.post(reverse('v1:verify'), data)
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEquals(response.data['user'][0].code, 'does_not_exist')
 
     def test_expired(self):
         mock_time = mock.Mock()
 
         @mock.patch('time.time', mock_time)
         def _construct_expired_serializer_data(data):
-            return VerifySerializer(data).data
+            return VerifySerializer(data)
 
         def _run(delay):
             mock_time.return_value = time.time() - settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE + delay
-
-            data = {'user': self.user, 'action': 'activate'}
-            serializer_data = _construct_expired_serializer_data(data)
-            serializer = VerifySerializer(data=serializer_data)
+            data = _construct_expired_serializer_data({'user': self.user, 'action': 'activate'}).data
+            response = self.client.post(reverse('v1:verify'), data)
 
             if delay >= 0:
-                serializer.is_valid(raise_exception=True)
+                self.assertEquals(response.status_code, status.HTTP_200_OK)
                 return True
             else:
-                with self.assertRaises(ValidationError) as cm:
-                    serializer.is_valid(raise_exception=True)
-                self.assertEqual(cm.exception.detail['timestamp'][0].code, 'invalid')
-                self.assertEqual(cm.exception.detail['timestamp'][0], 'Expired.')
+                self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+                self.assertEquals(response.data['detail'], 'Signature expired.')
                 return False
 
         failed_delays = set()

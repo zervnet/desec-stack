@@ -134,7 +134,8 @@ class User(AbstractBaseUser):
 
         self.send_email('password-change-confirmation')
 
-    def send_email(self, reason, context={}, recipient=None):
+    def send_email(self, reason, context=None, recipient=None):
+        context = context or {}
         reasons = [
             'activate',
             'activate-with-domain',
@@ -145,7 +146,7 @@ class User(AbstractBaseUser):
             'delete-user',
         ]
         recipient = recipient or self.email
-        if not reason in reasons:
+        if reason not in reasons:
             raise ValueError('Cannot send email to user {} without a good reason: {}'.format(self.email, reason))
         content_tmpl = get_template('emails/{}/content.txt'.format(reason))
         subject_tmpl = get_template('emails/{}/subject.txt'.format(reason))
@@ -154,7 +155,7 @@ class User(AbstractBaseUser):
                              content_tmpl.render(context),
                              from_tmpl.render(context),
                              [recipient])
-        logger.warn('Sending email for user account %s (reason: %s)', str(self.pk), reason)
+        logger.warning('Sending email for user account %s (reason: %s)', str(self.pk), reason)
         email.send()
 
 

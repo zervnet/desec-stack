@@ -31,6 +31,10 @@ class PDNSChangeTracker:
     `modifications` and `deletions` are guaranteed to be disjoint.
     - If an item is in the set of deletions while being modified, an exception is raised.
     - If an item is in the set of modifications while being deleted, it is removed from `rr_set_modifications`.
+
+    Note every change tracker object will track all changes to the model across threading.
+    To avoid side-effects, it is recommended to run only one change tracker at a time, i.e.
+    do not use them in parallel (in a multi-threading scenario), do not use them nested.
     """
 
     class PDNSChange:

@@ -107,12 +107,19 @@ class URLParamAuthentication(BaseAuthentication):
 class SignatureAuthentication(BaseAuthentication):
     """
     Authentication against signature as provided in request data.
+
+    For successful authentication, request.data is required to have the following fields:
+    - timestamp: int, UNIX timestamp
+    - user: primary key of the User model
+    - signature: str, cryptographic signature
+    To pass validation, depending on the signature other fields may be required.
     """
 
     def authenticate(self, request):
         """
         Returns a `User` if the request is correctly signed and the user exists.
         Otherwise returns `None`.
+        Raises AuthenticationFailed exception when the signature cannot be verified or is expired.
         """
 
         data = request.data.copy()

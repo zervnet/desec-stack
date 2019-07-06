@@ -1,6 +1,7 @@
 import base64
 import binascii
 import json
+from copy import deepcopy
 
 import django.core.exceptions
 from django.contrib.auth import user_logged_in

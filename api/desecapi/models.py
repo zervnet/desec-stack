@@ -21,7 +21,6 @@ from rest_framework.exceptions import APIException
 
 from desecapi import pdns
 
-
 logger = logging.getLogger(__name__)
 
 

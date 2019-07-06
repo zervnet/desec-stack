@@ -9,8 +9,8 @@ from rest_framework.authentication import (
 )
 
 from api import settings
-from desecapi.models import Token, User
 from desecapi.crypto import verify as verify_signature
+from desecapi.models import Token, User
 
 
 class TokenAuthentication(RestFrameworkTokenAuthentication):

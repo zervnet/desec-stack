@@ -423,6 +423,7 @@ class AccountView(generics.RetrieveAPIView):
 class AccountDeleteView(GenericAPIView):
     permission_classes = (IsAuthenticated,)
     serializer_class = serializers.PasswordSerializer
+    # TODO this should use a different authentication class
 
     def get_object(self):
         return self.request.user
@@ -439,6 +440,9 @@ class AccountDeleteView(GenericAPIView):
         # At this point, we know that we are talking to the user, so we can tell that we sent an email.
         return Response(data={'detail': 'Please check your mailbox for further account deletion instructions.'},
                         status=status.HTTP_202_ACCEPTED)
+
+
+# TODO the following views have code duplication that should be put in a base class
 
 
 class AccountLoginView(GenericAPIView):

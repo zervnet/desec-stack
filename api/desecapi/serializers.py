@@ -477,7 +477,7 @@ class DomainSerializer(serializers.ModelSerializer):
 
         return value
 
-    def validate(self, attrs):
+    def validate(self, attrs):  # TODO I believe this should be a permission, not a validation
         # Check user's domain limit
         owner = self.context['request'].user
         if (owner.limit_domains is not None and
@@ -488,10 +488,10 @@ class DomainSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         # Create domain
-        with PDNSChangeTracker():
+        with PDNSChangeTracker():  # TODO I believe this is view-business
             domain = super().create(validated_data)
 
-        # Autodelegation
+        # Autodelegation  # TODO I believe this is view-business
         parent_domain_name = domain.partition_name()[1]
         if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
             parent_domain = Domain.objects.get(name=parent_domain_name)
@@ -522,11 +522,11 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ('created', 'email', 'id', 'limit_domains', 'password',)
+        fields = ('created', 'email', 'id', 'limit_domains', 'password',)  # TODO limit_domains is writeable, no?
         extra_kwargs = {
             'password': {
                 'write_only': True,  # Do not expose password field
-                'trim_whitespace': False,  # Take passwords literally
+                'trim_whitespace': False,  # Take passwords literally  # TODO use BasePaswordSerializer for this field?
             }
         }
 
@@ -535,7 +535,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterAccountSerializer(UserSerializer):
-    domain = serializers.CharField(required=False)  # TODO do we need more validation?
+    domain = serializers.CharField(required=False)  # TODO Needs more validation
 
     class Meta:
         model = UserSerializer.Meta.model
@@ -556,7 +556,7 @@ class BasePasswordSerializer(serializers.Serializer):
 
 
 class PasswordSerializer(BasePasswordSerializer):
-    def validate_password(self, value):
+    def validate_password(self, value):  # TODO authentication should not be serializer business
         user = self.context.get('request').user
         if not user.check_password(value):
             msg = 'Password mismatch.'
@@ -578,7 +578,7 @@ class ChangeEmailSerializer(PasswordSerializer):
 
 class LoginSerializer(EmailSerializer, BasePasswordSerializer):
     # This is inspired by rest_framework.authtoken.serializers.AuthTokenSerializer.
-    def validate(self, attrs):
+    def validate(self, attrs):  # TODO authentication should not be serializer business
         user = authenticate(request=self.context.get('request'), email=attrs['email'], password=attrs['password'])
 
         # The authenticate call simply returns None for is_active=False users.
@@ -599,8 +599,11 @@ class VerifySerializer(serializers.Serializer):
         'change-password',
         'delete'
     ])
-    user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(),
-                                              error_messages={'does_not_exist': 'This user does not exist.'})
+    user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        error_messages={'does_not_exist': 'This user does not exist.'}  # TODO this validation may happen before the
+                                                                        #  signature validation?
+    )
     email = serializers.EmailField(required=False)
     password = serializers.CharField(required=False, trim_whitespace=False)
     domain = serializers.CharField(required=False)  # TODO do we need more validation?
@@ -609,10 +612,11 @@ class VerifySerializer(serializers.Serializer):
 
     def to_representation(self, instance):
         # Having email and password at the same time is currently not a use case
-        assert not (instance.get('email') and instance.get('password'))
+        assert not (instance.get('email') and instance.get('password'))  # TODO assertion failure will result in 500 status
         signed_instance = sign(instance)
         ret = super().to_representation(signed_instance)
         assert '@' not in str(ret['user'])  # make sure the user representation does not expose the email address
+        # TODO replace the previous line with a Django test
         return ret
 
     def validate(self, attrs):
@@ -629,6 +633,8 @@ class VerifySerializer(serializers.Serializer):
         }
         action = attrs['action']
         allowed_fields = allowed_fields_by_action[action] + ['action', 'user', 'signature', 'timestamp']
+        # TODO its a common pattern to ignore extra fields for compatibility. Do we have good reason to be so strict
+        #  here?
         message_dict = {field: 'This field is not allowed for action {}.'.format(action)
                         for field in self.initial_data if field not in allowed_fields}
 
@@ -655,6 +661,9 @@ class VerifySerializer(serializers.Serializer):
         self.user.activate()
 
     def _save_activate_with_domain(self):
+        # TODO encapsulate this into a transaction?
+        #  if not in a transaction, we won't be able to send another email after account activation
+
         # Activate user
         self._save_activate()
 
@@ -677,6 +686,9 @@ class VerifySerializer(serializers.Serializer):
         self.user.delete()
 
     def save(self):
+        # TODO One way to make the VerifySerializer code a bit cleaner could be to derive multiple
+        #  VerifySerializer classes for the various actions, and then either distinguish in the view,
+        #  based on the action attribute, or distinguish in the router based on the URL.
         action_functions = {
             'activate': self._save_activate,
             'activate-with-domain': self._save_activate_with_domain,

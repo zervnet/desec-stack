@@ -135,7 +135,7 @@ class SignatureAuthentication(BaseAuthentication):
         try:
             data['user'] = User.objects.get(pk=data['user'])
         except User.DoesNotExist:
-            return None, None
+            return None, None  # TODO no exception here?
 
         if not verify_signature(data):
             raise exceptions.AuthenticationFailed('Bad signature.')

@@ -174,7 +174,7 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
             self.assertResponse(
                 self.client.post(self.reverse('v1:domain-list'), {'name': name}),
                 status.HTTP_400_BAD_REQUEST,
-                {'name': ['Domain name malformed.']},
+                {'name': ['Invalid value (not a DNS name).']},
             )
 
     def test_create_public_suffixes(self):
@@ -215,7 +215,7 @@ class DomainOwnerTestCase1(DomainOwnerTestCase):
         name = '*.' + self.random_domain_name()
         response = self.client.post(self.reverse('v1:domain-list'), {'name': name})
         self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
-        self.assertTrue("Domain name malformed." in response.data['name'][0])
+        self.assertTrue("Invalid value (not a DNS name)." in response.data['name'][0])
 
     def test_create_domain_other_parent(self):
         name = 'something.' + self.other_domain.name

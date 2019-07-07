@@ -189,7 +189,7 @@ class Domain(models.Model):
                             unique=True,
                             validators=[validate_lower,
                                         RegexValidator(regex=r'^[a-z0-9_.-]*[a-z]$',
-                                                       message='Domain name malformed.',
+                                                       message='Invalid value (not a DNS name).',
                                                        code='invalid_domain_name')
                                         ])
     owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name='domains')
@@ -354,3 +354,32 @@ class RR(models.Model):
 
     def __str__(self):
         return '<RR %s>' % self.content
+
+
+class ValidatedUserAction(models.Model):
+    user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
+    domain = models.CharField(max_length=191,
+                              blank=True,
+                              validators=[validate_lower,
+                                          RegexValidator(regex=r'^[a-z0-9_.-]*[a-z]$',
+                                                         message='Invalid value (not a DNS name).',
+                                                         code='invalid_domain_name')
+                                          ])  # TODO copied from models.Domain
+
+    class Meta:
+        managed = False
+
+
+class ActivateUserAction(ValidatedUserAction):
+    action = 'activate'
+
+    class Meta:
+        managed = False
+
+
+class ChangeEmailAction(ValidatedUserAction):
+    action = 'change-email'
+    new_email = models.EmailField()
+
+    class Meta:
+        managed = False

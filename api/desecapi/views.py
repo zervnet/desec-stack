@@ -383,6 +383,7 @@ class UserCreateView(generics.CreateAPIView):
         # Alternative would be to create user once email is verified, but this could be abused for bulk email.
 
         serializer = self.get_serializer(data=request.data)
+        activation_required = settings.USER_ACTIVATION_REQUIRED
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
@@ -395,11 +396,10 @@ class UserCreateView(generics.CreateAPIView):
                 raise e
         else:
             ip = self.request.META.get('REMOTE_ADDR')
-            is_active = settings.USER_CREATE_VIEW_USER_IS_ACTIVE
-            user = serializer.save(is_active=is_active, registration_remote_ip=ip)
+            user = serializer.save(is_active=(not activation_required), registration_remote_ip=ip)
 
             domain = serializer.validated_data.get('domain')
-            if domain or not is_active:
+            if domain or activation_required:
                 data = {'action': 'activate', 'user': user}
                 if domain:
                     data.update({'action': 'activate-with-domain', 'domain': domain})
@@ -408,8 +408,8 @@ class UserCreateView(generics.CreateAPIView):
                 user.send_email(data['action'], context={'verification_code': verification_code})
 
         # This request is unauthenticated, so don't expose whether we did anything.
-        return Response(data={'detail': 'Welcome! Please check your mailbox.'},
-                        status=status.HTTP_202_ACCEPTED)
+        message = 'Welcome! Please check your mailbox.' if activation_required else 'Welcome!'
+        return Response(data={'detail': message}, status=status.HTTP_202_ACCEPTED)
 
 
 class AccountView(generics.RetrieveAPIView):

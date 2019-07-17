@@ -475,7 +475,9 @@ class AccountChangeEmailView(GenericAPIView):
         verification_data = {'action': 'change-email', 'user': request.user, 'email': new_email}
         verification_serializer_data = serializers.VerifySerializer(verification_data).data
         request.user.send_email('change-email', recipient=new_email, context={
-            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
+            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode(),
+            'old_email': request.user.email,
+            'new_email': new_email,
         })
 
         # At this point, we know that we are talking to the user, so we can tell that we sent an email.

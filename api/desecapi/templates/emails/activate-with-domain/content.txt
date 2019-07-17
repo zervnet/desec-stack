@@ -1,4 +1,14 @@
-TODO
-verification code: {{ verification_code }}
-welcome
-Your domain will be created once you click on this link.
+Hi there,
+
+Thank you for registering with deSEC!
+
+As we may need to contact you in the future, you need to verify your
+email address before we can register your domain. To do so, please use
+the following link:
+
+{{ verification_code }}
+
+After that, please follow the instructions on the confirmation page.
+
+Stay secure,
+Nils

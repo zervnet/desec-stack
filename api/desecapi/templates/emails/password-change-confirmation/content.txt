@@ -1,2 +1,10 @@
-TODO
-This is to let you know that the password of your account deSEC accout has been changed. If this was not initiated by you, please contact us.
+Hi,
+
+This is to let you know that the password for your deSEC account has
+been changed.
+
+If you did not expect that to happen, please contact us immediately at
+support@desec.io.
+
+Stay secure,
+The deSEC Team

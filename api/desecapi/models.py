@@ -151,8 +151,9 @@ class User(AbstractBaseUser):
         content_tmpl = get_template('emails/{}/content.txt'.format(reason))
         subject_tmpl = get_template('emails/{}/subject.txt'.format(reason))
         from_tmpl = get_template('emails/from.txt')
+        footer_tmpl = get_template('emails/footer.txt')
         email = EmailMessage(subject_tmpl.render(context).strip(),
-                             content_tmpl.render(context),
+                             content_tmpl.render(context) + footer_tmpl.render(),
                              from_tmpl.render(context),
                              [recipient])
         logger.warning('Sending email for user account %s (reason: %s)', str(self.pk), reason)

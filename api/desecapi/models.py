@@ -153,7 +153,7 @@ class Domain(models.Model):
                                         ])
     owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name='domains')
     published = models.DateTimeField(null=True, blank=True)
-    minimum_ttl = models.PositiveIntegerField(default=settings.MINIMUM_TTL_DEFAULT)
+    minimum_ttl = models.PositiveIntegerField()
 
     @property
     def keys(self):
@@ -165,6 +165,7 @@ class Domain(models.Model):
         return subname, parent_name or None
 
     def save(self, *args, **kwargs):
+        self.minimum_ttl = self.minimum_ttl or settings.MINIMUM_TTL_DEFAULT
         self.full_clean(validate_unique=False)
         super().save(*args, **kwargs)
 

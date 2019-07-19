@@ -725,7 +725,7 @@ class DesecTestCase(MockPDNSTestCase):
     @classmethod
     def create_rr_set(cls, domain, records, **kwargs):
         if isinstance(domain, str):
-            domain = Domain.objects.get_or_create(name=domain)
+            domain = Domain.objects.get(name=domain)
             domain.save()
         rr_set = RRset(domain=domain, **kwargs)
         rr_set.save()

@@ -74,7 +74,7 @@ class DesecAPIClient(APIClient):
 
     def get_rr_sets(self, domain_name, **kwargs):
         return self.get(
-            self.reverse('v1:rrsets', name=domain_name),
+            self.reverse('v1:rrsets', name=domain_name) + kwargs.pop('query', ''),
             kwargs
         )
 

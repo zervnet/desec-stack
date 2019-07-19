@@ -1,3 +1,5 @@
+import re
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
@@ -42,15 +44,90 @@ class AuthenticatedRRSetTestCase(AuthenticatedRRSetBaseTestCase):
             self.assertStatus(response, status.HTTP_200_OK)
             self.assertEqual(len(response.data), 1, response.data)
 
+    def test_retrieve_my_rr_sets_pagination(self):
+        # Helper
+        def convert_links(links):
+            mapping = {}
+            for link in links.split(', '):
+                url, label = link.split('; ')
+                label = re.search('rel="(.*)"', label).group(1)
+                url = url[1:-1]
+                assert label not in mapping
+                mapping[label] = url
+            return mapping
+
+        # Prepare extra records so that we get three pages (total: n + 1)
+        n = int(settings.REST_FRAMEWORK['PAGE_SIZE'] * 2.5)
+        RRset.objects.bulk_create(
+            [RRset(domain=self.my_domain, subname=str(i), ttl=123, type='A') for i in range(n)]
+        )
+
+        # No pagination
+        response = self.client.get_rr_sets(self.my_domain.name)
+        self.assertStatus(response, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['detail'],
+                         f'Pagination required. You can query up to {settings.REST_FRAMEWORK["PAGE_SIZE"]} items at a time ({n+1} total). '
+                         'Please use the `first` page link (see Link header).')
+        links = convert_links(response['Link'])
+        self.assertEqual(len(links), 1)
+        self.assertTrue(links['first'].endswith('/?cursor='))
+
+        # First page
+        response = self.client.get(links['first'])
+        self.assertStatus(response, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), settings.REST_FRAMEWORK['PAGE_SIZE'])
+        links = convert_links(response['Link'])
+        self.assertEqual(len(links), 2)
+        self.assertTrue(links['first'].endswith('/?cursor='))
+        self.assertEqual(links['first'].find('/?cursor='), links['next'].find('/?cursor='))
+        self.assertTrue(len(links['next']) > len(links['first']))
+
+        # Next
+        response = self.client.get(links['next'])
+        data_next = response.data.copy()
+        self.assertStatus(response, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), settings.REST_FRAMEWORK['PAGE_SIZE'])
+        links = convert_links(response['Link'])
+        self.assertEqual(len(links), 3)
+        self.assertTrue(links['first'].endswith('/?cursor='))
+        self.assertEqual(links['first'].find('/?cursor='), links['next'].find('/?cursor='))
+        self.assertTrue(len(links['next']) > len(links['first']))
+        self.assertEqual(links['first'].find('/?cursor='), links['prev'].find('/?cursor='))
+        self.assertTrue(len(links['prev']) > len(links['first']))
+
+        # Next-next (last) page
+        response = self.client.get(links['next'])
+        self.assertStatus(response, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), n/5 + 1)
+        links = convert_links(response['Link'])
+        self.assertEqual(len(links), 2)
+        self.assertTrue(links['first'].endswith('/?cursor='))
+        self.assertEqual(links['first'].find('/?cursor='), links['prev'].find('/?cursor='))
+        self.assertTrue(len(links['prev']) > len(links['first']))
+
+        # Prev
+        response = self.client.get(links['prev'])
+        self.assertStatus(response, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), settings.REST_FRAMEWORK['PAGE_SIZE'])
+        links = convert_links(response['Link'])
+        self.assertEqual(len(links), 3)
+        self.assertTrue(links['first'].endswith('/?cursor='))
+        self.assertEqual(links['first'].find('/?cursor='), links['next'].find('/?cursor='))
+        self.assertTrue(len(links['next']) > len(links['first']))
+        self.assertEqual(links['first'].find('/?cursor='), links['prev'].find('/?cursor='))
+        self.assertTrue(len(links['prev']) > len(links['first']))
+
+        # Make sure that one step forward equals two steps forward and one step back
+        self.assertEqual(response.data, data_next)
+
     def test_retrieve_other_rr_sets(self):
         self.assertStatus(self.client.get_rr_sets(self.other_domain.name), status.HTTP_404_NOT_FOUND)
         self.assertStatus(self.client.get_rr_sets(self.other_domain.name, subname='test'), status.HTTP_404_NOT_FOUND)
         self.assertStatus(self.client.get_rr_sets(self.other_domain.name, type='A'), status.HTTP_404_NOT_FOUND)
 
     def test_retrieve_my_rr_sets_filter(self):
-        response = self.client.get_rr_sets(self.my_rr_set_domain.name)
+        response = self.client.get_rr_sets(self.my_rr_set_domain.name, query='?cursor=')
         self.assertStatus(response, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), len(self._test_rr_sets()))
 
         for subname in self.SUBNAMES:
             response = self.client.get_rr_sets(self.my_rr_set_domain.name, subname=subname)

@@ -18,7 +18,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 # See https://docs.djangoproject.com/en/1.7/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['DESECSTACK_API_SECRETKEY']
+SECRET_KEY = os.environ.get('DESECSTACK_API_SECRETKEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
@@ -143,7 +143,7 @@ AUTH_USER_MODEL = 'desecapi.User'
 
 # default NS records
 DEFAULT_NS = [name + '.' for name in os.environ['DESECSTACK_NS'].strip().split()]
-DEFAULT_NS_TTL = os.environ['DESECSTACK_NSLORD_DEFAULT_TTL']
+DEFAULT_NS_TTL = os.environ.get('DESECSTACK_NSLORD_DEFAULT_TTL')
 
 # Public Suffix settings
 PSL_RESOLVER = os.environ.get('DESECSTACK_API_PSL_RESOLVER')
@@ -151,9 +151,9 @@ LOCAL_PUBLIC_SUFFIXES = {'dedyn.io'}
 
 # PowerDNS API access
 NSLORD_PDNS_API = 'http://nslord:8081/api/v1/servers/localhost'
-NSLORD_PDNS_API_TOKEN = os.environ['DESECSTACK_NSLORD_APIKEY']
+NSLORD_PDNS_API_TOKEN = os.environ.get('DESECSTACK_NSLORD_APIKEY')
 NSMASTER_PDNS_API = 'http://nsmaster:8081/api/v1/servers/localhost'
-NSMASTER_PDNS_API_TOKEN = os.environ['DESECSTACK_NSMASTER_APIKEY']
+NSMASTER_PDNS_API_TOKEN = os.environ.get('DESECSTACK_NSMASTER_APIKEY')
 
 # pdns accepts request payloads of this size.
 # This will hopefully soon be configurable: https://github.com/PowerDNS/pdns/pull/7550
@@ -166,8 +166,8 @@ SEPA = {
 }
 
 # recaptcha
-NORECAPTCHA_SITE_KEY = os.environ['DESECSTACK_NORECAPTCHA_SITE_KEY']
-NORECAPTCHA_SECRET_KEY = os.environ['DESECSTACK_NORECAPTCHA_SECRET_KEY']
+NORECAPTCHA_SITE_KEY = os.environ.get('DESECSTACK_NORECAPTCHA_SITE_KEY')
+NORECAPTCHA_SECRET_KEY = os.environ.get('DESECSTACK_NORECAPTCHA_SECRET_KEY')
 NORECAPTCHA_WIDGET_TEMPLATE = 'captcha-widget.html'
 
 # abuse protection

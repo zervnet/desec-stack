@@ -36,12 +36,12 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = (
+    'corsheaders',
+    'desecapi',
     'django.contrib.auth',
     'django.contrib.contenttypes',
-    'rest_framework',
     'djoser',
-    'desecapi',
-    'corsheaders',
+    'rest_framework',
 )
 
 MIDDLEWARE = (

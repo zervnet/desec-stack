@@ -5,6 +5,7 @@ django-cors-headers~=3.0.2
 django-nocaptcha-recaptcha==0.0.20  # updated manually
 djangorestframework~=3.9.3
 djangorestframework-bulk~=0.2.0
+django-celery-email~=2.0.2
 djoser~=1.5.1
 dnspython~=1.16.0
 httpretty~=0.9.0

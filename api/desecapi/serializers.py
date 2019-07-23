@@ -6,12 +6,12 @@ from json import JSONDecodeError
 
 import psl_dns
 from django.contrib.auth import authenticate
-from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
 from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
+from rest_framework.fields import empty
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator, UniqueValidator, qs_filter
@@ -581,6 +581,27 @@ class LoginSerializer(EmailSerializer, BasePasswordSerializer):
         return attrs
 
 
+class CustomFieldNameUniqueValidator(UniqueValidator):
+    """
+    Does exactly what rest_framework's UniqueValidator does, however allows to further customize the
+    query that is used to determine the uniqueness.
+    More specifically, we allow that the field name the value is queried against is passed when initializing
+    this validator. (At the time of writing, UniqueValidator insists that the field's name is used for the
+    database query field; only how the lookup must match is allowed to be changed.)
+    """
+
+    def __init__(self, queryset, message=None, lookup='exact', lookup_field=None):
+        self.lookup_field = lookup_field
+        super().__init__(queryset, message, lookup)
+
+    def filter_queryset(self, value, queryset):
+        """
+        Filter the queryset to all instances matching the given value on the specified lookup field.
+        """
+        filter_kwargs = {'%s__%s' % (self.lookup_field or self.field_name, self.lookup): value}
+        return qs_filter(queryset, **filter_kwargs)
+
+
 class SignedUserAction(serializers.ModelSerializer):
     # regular model fields
     user = serializers.PrimaryKeyRelatedField(
@@ -654,6 +675,15 @@ class ActivateUserSignedUserAction(SignedUserAction):
 
 
 class ChangeEmailSignedUserAction(SignedUserAction):
+    new_email = serializers.CharField(
+        validators=[
+            CustomFieldNameUniqueValidator(
+                queryset=User.objects.all(),
+                lookup_field='email',
+                message='You already have another account with this email address.',
+            )
+        ]
+    )
 
     class Meta(SignedUserAction.Meta):
         model = ChangeEmailAction

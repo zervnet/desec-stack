@@ -106,7 +106,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         return self.client.delete_account(token, password)
 
     def assertContains(self, response, text, count=None, status_code=200, msg_prefix='', html=False):
-        self.assertStatus(response, status_code)  # This is checked later again, but our error message is nicer
+        msg_prefix += '\nResponse: %s' % response.data
         super().assertContains(response, text, count, status_code, msg_prefix, html)
 
     def assertPassword(self, email, password):

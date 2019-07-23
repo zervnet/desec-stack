@@ -2,7 +2,6 @@ import binascii
 import json
 import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
-from json import JSONDecodeError
 
 import psl_dns
 from django.contrib.auth import authenticate
@@ -11,7 +10,6 @@ from django.db.models import Model, Q
 from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
-from rest_framework.fields import empty
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator, UniqueValidator, qs_filter
@@ -618,20 +616,30 @@ class SignedUserAction(serializers.ModelSerializer):
         model = UserAction
         fields = ('action', 'user', 'signature', 'timestamp')
 
+    @staticmethod
+    def _pack(unpacked_data):
+        return {'verification_code': urlsafe_b64encode(json.dumps(unpacked_data).encode()).decode()}
+
+    @staticmethod
+    def _unpack(packed_data):
+        try:
+            return json.loads(urlsafe_b64decode(packed_data['verification_code'].encode()).decode())
+        except KeyError:
+            raise ValidationError('No verification code.')
+        except (json.JSONDecodeError, binascii.Error):
+            # TODO list of exceptions complete?
+            raise ValidationError('Invalid verification code.')
+
     def to_representation(self, instance: UserAction):
         # do the regular business
         data = super().to_representation(instance)
 
         # encode into single string
-        return {'verification_code': urlsafe_b64encode(json.dumps(data).encode()).decode()}
+        return self._pack(data)
 
     def to_internal_value(self, data):
         # decode from single string
-        try:
-            unpacked_data = json.loads(urlsafe_b64decode(data.get('verification_code', '').encode()).decode())
-        except (JSONDecodeError, binascii.Error):
-            # TODO list of exceptions complete?
-            raise ValidationError('Invalid verification code.')
+        unpacked_data = self._unpack(data)
 
         # add extra fields added by the user
         unpacked_data.update(**data)

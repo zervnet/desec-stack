@@ -669,6 +669,7 @@ class ActivateUserSignedUserAction(SignedUserAction):
 
     class Meta(SignedUserAction.Meta):
         model = ActivateUserAction
+        fields = SignedUserAction.Meta.fields + ('domain',)
         extra_kwargs = {
             'domain': {'required': False, 'allow_blank': True, 'allow_null': True}
         }

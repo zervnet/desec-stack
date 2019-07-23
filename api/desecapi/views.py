@@ -1,7 +1,5 @@
 import base64
 import binascii
-import json
-from copy import deepcopy
 
 import django.core.exceptions
 from django.contrib.auth import user_logged_in
@@ -12,7 +10,7 @@ from rest_framework import generics
 from rest_framework import mixins
 from rest_framework import status
 from rest_framework.authentication import get_authorization_header
-from rest_framework.exceptions import (ErrorDetail, NotFound, PermissionDenied, ValidationError)
+from rest_framework.exceptions import (NotFound, PermissionDenied, ValidationError)
 from rest_framework.generics import (
     GenericAPIView, ListCreateAPIView, RetrieveUpdateDestroyAPIView, UpdateAPIView, get_object_or_404
 )
@@ -25,7 +23,8 @@ from rest_framework.viewsets import GenericViewSet
 import desecapi.authentication as auth
 from api import settings
 from desecapi import serializers
-from desecapi.models import Domain, User, RRset, Token
+from desecapi.models import Domain, User, RRset, Token, ActivateUserAction, ChangeEmailAction, DeleteUserAction, \
+    ResetPasswordAction
 from desecapi.pdns_change_tracker import PDNSChangeTracker
 from desecapi.permissions import IsOwner, IsDomainOwner
 from desecapi.renderers import PlainTextRenderer
@@ -78,7 +77,9 @@ class DomainList(ListCreateAPIView):
         return Domain.objects.filter(owner=self.request.user.pk)
 
     def perform_create(self, serializer):
-        domain = serializer.save(owner=self.request.user)
+        with PDNSChangeTracker():
+            domain = serializer.save(owner=self.request.user)
+        PDNSChangeTracker.track(lambda: self.auto_delegate(domain))
 
         # Send dyn email
         if domain.name.endswith('.dedyn.io'):
@@ -97,6 +98,13 @@ class DomainList(ListCreateAPIView):
                                  [self.request.user.email])
             email.send()
 
+    @staticmethod
+    def auto_delegate(domain: Domain):
+        parent_domain_name = domain.partition_name()[1]
+        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
+            parent_domain = Domain.objects.get(name=parent_domain_name)
+            parent_domain.update_delegation(domain)
+
 
 class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):
     serializer_class = serializers.DomainSerializer
@@ -106,9 +114,8 @@ class DomainDetail(IdempotentDestroy, RetrieveUpdateDestroyAPIView):
     def perform_destroy(self, instance: Domain):
         with PDNSChangeTracker():
             instance.delete()
-        parent_domain_name = instance.partition_name()[1]
-        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
-            parent_domain = Domain.objects.get(name=parent_domain_name)
+        if instance.has_local_public_suffix():
+            parent_domain = Domain.objects.get(name=instance.parent_domain_name())
             with PDNSChangeTracker():
                 parent_domain.update_delegation(instance)
 
@@ -375,7 +382,10 @@ class DonationList(generics.CreateAPIView):
         send_donation_emails(obj)
 
 
-class UserCreateView(generics.CreateAPIView):
+# TODO the following views have code duplication that should be put in a base class
+
+
+class UserCreateView(generics.CreateAPIView):  # TODO rename 'Account....'
     serializer_class = serializers.RegisterAccountSerializer
 
     def create(self, request, *args, **kwargs):
@@ -400,16 +410,17 @@ class UserCreateView(generics.CreateAPIView):
 
             domain = serializer.validated_data.get('domain')
             if domain or activation_required:
-                data = {'action': 'activate', 'user': user}
-                if domain:
-                    data.update({'action': 'activate-with-domain', 'domain': domain})
-                verification_serializer_data = serializers.VerifySerializer(data).data
-                verification_code = base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
-                user.send_email(data['action'], context={'verification_code': verification_code})
+                instance = ActivateUserAction(user=user, domain=domain)
+                verification = serializers.ActivateUserSignedUserAction(instance).data
+                user.send_email('activate', context=verification)
 
         # This request is unauthenticated, so don't expose whether we did anything.
         message = 'Welcome! Please check your mailbox.' if activation_required else 'Welcome!'
         return Response(data={'detail': message}, status=status.HTTP_202_ACCEPTED)
+
+
+class SignedActionView(GenericAPIView):
+    pass
 
 
 class AccountView(generics.RetrieveAPIView):
@@ -426,23 +437,19 @@ class AccountDeleteView(GenericAPIView):
     # TODO this should use a different authentication class
 
     def get_object(self):
+        # TODO is this needed?
         return self.request.user
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        verification_serializer_data = serializers.VerifySerializer({'action': 'delete', 'user': request.user}).data
-        request.user.send_email('delete-user', context={
-            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
-        })
+        action = DeleteUserAction(user=self.request.user)
+        request.user.send_email('delete-user', context=serializers.DeleteUserSignedUserAction(action).data)
 
         # At this point, we know that we are talking to the user, so we can tell that we sent an email.
         return Response(data={'detail': 'Please check your mailbox for further account deletion instructions.'},
                         status=status.HTTP_202_ACCEPTED)
-
-
-# TODO the following views have code duplication that should be put in a base class
 
 
 class AccountLoginView(GenericAPIView):
@@ -472,10 +479,11 @@ class AccountChangeEmailView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         new_email = serializer.validated_data['new_email']
 
-        verification_data = {'action': 'change-email', 'user': request.user, 'email': new_email}
-        verification_serializer_data = serializers.VerifySerializer(verification_data).data
+        verification_code = serializers.ChangeEmailSignedUserAction(
+            ChangeEmailAction(user=request.user, new_email=new_email)
+        ).data['verification_code']
         request.user.send_email('change-email', recipient=new_email, context={
-            'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode(),
+            'verification_code': verification_code,
             'old_email': request.user.email,
             'new_email': new_email,
         })
@@ -497,10 +505,8 @@ class AccountResetPasswordView(GenericAPIView):
         except User.DoesNotExist:
             pass
         else:
-            verification_serializer_data = serializers.VerifySerializer({'action': 'change-password', 'user': user}).data
-            user.send_email('reset-password', context={
-                'verification_code': base64.urlsafe_b64encode(json.dumps(verification_serializer_data).encode()).decode()
-            })
+            action = ResetPasswordAction(user=user)
+            user.send_email('reset-password', context=serializers.ChangePasswordSignedUserAction(action).data)
 
         # This request is unauthenticated, so don't expose whether we did anything.
         return Response(data={'detail': 'Please check your mailbox for further password reset instructions.'},
@@ -509,49 +515,74 @@ class AccountResetPasswordView(GenericAPIView):
 
 class VerifyView(GenericAPIView):
     authentication_classes = (auth.SignatureAuthentication,)
-    serializer_class = serializers.VerifySerializer
 
     def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        domain_exception = None
+        action = kwargs.get('action')
+        handler = getattr(self, 'action_%s' % action)  # TODO this may have unwanted security implications
+                                                       #  URL (kwargs) action may be different from signed action
+        return handler(request, *args, **kwargs)
+
+    def action_activate(self, request, *args, **kwargs):
+        serializer = serializers.ActivateUserSignedUserAction(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        action = serializer.act()
+
+        if not action.domain:
+            return Response({
+                'detail': 'Success! Please log in at {}.'.format(self.request.build_absolute_uri(reverse('v1:login')))
+            })
+
+        serializer = serializers.DomainSerializer(
+            data={'name': action.domain},
+            context=self.get_serializer_context()
+        )
         try:
             serializer.is_valid(raise_exception=True)
-            serializer.save()
-        except ValidationError as e:
-            domain_error_codes = [detail.code for detail in e.detail.get('domain', [])]
-            if domain_error_codes:
-                if request.user:
-                    request.user.delete()
-                reason = ','.join(domain_error_codes)
-                e.detail['domain'] = ErrorDetail('The requested domain {} could not be registered (reason: {}). '
-                                                 'Please start over and sign up again.').format('{}', reason)
-                domain_exception = e
-            else:
-                raise e
+        except ValidationError as e:  # e.g. domain name unavailable
+            action.user.delete()
+            reasons = ', '.join([detail.code for detail in e.detail.get('name', [])])
+            raise ValidationError(
+                f'The requested domain {action.domain} could not be registered (reason: {reasons}). '
+                f'Please start over and sign up again.'
+            )
+        domain = PDNSChangeTracker.track(lambda: serializer.save(owner=action.user))
 
-        action = request.data['action']  # TODO avoid using request.data
-        if action == 'activate-with-domain':
-            domain_name = request.data['domain']  # TODO avoid using request.data
-            data = {}
-            if domain_exception:
-                domain_exception.detail['domain'] = domain_exception.detail['domain'].format(domain_name)
-                raise domain_exception
-            else:
-                domain = Domain.objects.get(owner=request.user, name=domain_name)
-                data['domain'] = serializers.DomainSerializer(domain).data,
-                if domain_name.endswith('.dedyn.io'):
-                    token = Token.objects.create(user=request.user, name='dyndns')
-                    data['detail'] = 'Success! Here is the access token (= password) to configure your dynDNS client.'
-                    data['auth_token'] = serializers.TokenSerializer(token).data['auth_token']
-                else:
-                    data['detail'] = 'Success! Please check the docs for the next steps.'
+        if domain.parent_domain_name() in settings.LOCAL_PUBLIC_SUFFIXES:
+            PDNSChangeTracker.track(lambda: DomainList.auto_delegate(domain))
+            token = Token.objects.create(user=request.user, name='dyndns')
+            return Response({
+                # TODO wording (token vs password)
+                'detail': 'Success! Here is the access token (= password) to configure your dynDNS client.',
+                # TODO nested or no TokenSerializer?
+                'auth_token': serializers.TokenSerializer(token).data['auth_token'],
+            })
         else:
-            details = {
-                'activate': 'Success! Please log in at {}.'.format(self.request.build_absolute_uri(reverse('v1:login'))),
-                'change-email': 'Success! Your email address has been changed.',
-                'change-password': 'Success! Your password has been changed.',
-                'delete': 'All your data has been deleted. Bye bye, see you soon! <3'
-            }
-            data = {'detail': details[action]}
+            return Response({
+                # TODO add URL?
+                'detail': 'Success! Please check the docs for the next steps.'
+            })
 
-        return Response(data=data)
+    def action_change_email(self, request, *args, **kwargs):
+        serializer = serializers.ChangeEmailSignedUserAction(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        serializer.act()
+        return Response({
+            'detail': 'Success! Your email address has been changed.'
+        })
+
+    def action_password_reset(self, request, *args, **kwargs):
+        serializer = serializers.ChangePasswordSignedUserAction(data=request.data,
+                                                                context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        serializer.act()
+        return Response({
+            'detail': 'Success! Your password has been changed.'
+        })
+
+    def action_delete(self, request, *args, **kwargs):
+        serializer = serializers.DeleteUserSignedUserAction(data=request.data, context=self.get_serializer_context())
+        serializer.is_valid(raise_exception=True)
+        serializer.act()
+        return Response({
+            'detail': 'All your data has been deleted. Bye bye, see you soon! <3'
+        })

@@ -14,7 +14,7 @@ auth_urls = [
     path('account/change-email/', views.AccountChangeEmailView.as_view(), name='account-change-email'),
     path('account/reset-password/', views.AccountResetPasswordView.as_view(), name='account-reset-password'),
     path('login/', views.AccountLoginView.as_view(), name='login'),
-    path('verify/', views.VerifyView.as_view(), name='verify'),  # TODO or account/verify/?
+    path('verify/<action>/', views.VerifyView.as_view(), name='verify'),  # TODO or account/verify/?
 
     # Token management
     path('tokens/', include(tokens_router.urls)),

@@ -18,7 +18,6 @@ import re
 import time
 from unittest import mock
 
-from api import settings
 from django.core import mail
 from django.test import override_settings
 from rest_framework import status
@@ -26,8 +25,9 @@ from rest_framework.reverse import reverse
 from rest_framework.serializers import ValidationError
 from rest_framework.test import APIClient
 
-from desecapi.models import Domain, User
-from desecapi.serializers import VerifySerializer
+from api import settings
+from desecapi.models import Domain, User, UserAction
+from desecapi.serializers import SignedUserAction
 from desecapi.tests.base import DesecTestCase, PublicSuffixMockMixin
 
 
@@ -62,15 +62,29 @@ class UserManagementClient(APIClient):
     def view_account(self, token):
         return self.get(reverse('v1:account'), HTTP_AUTHORIZATION='Token {}'.format(token))
 
-    def verify(self, verification_code, **kwargs):
-        data = json.loads(base64.urlsafe_b64decode(verification_code.encode()).decode())
+    def verify(self, verification_code, action, **kwargs):
+        data = {'verification_code': verification_code}
         data.update(kwargs)
-        return self.post(reverse('v1:verify'), data)
+        return self.post(reverse('v1:verify', kwargs={'action': action}), data)
+
+    def verify_activation(self, verification_code, **kwargs):
+        return self.verify(verification_code, 'activate', **kwargs)
+
+    def verify_change_email(self, verification_code, **kwargs):
+        return self.verify(verification_code, 'change_email', **kwargs)
+
+    def verify_reset_password(self, verification_code, **kwargs):
+        return self.verify(verification_code, 'password_reset', **kwargs)
+
+    def verify_delete(self, verification_code, **kwargs):
+        return self.verify(verification_code, 'delete', **kwargs)
 
 
 class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
 
     client_class = UserManagementClient
+    password = None
+    token = None
 
     def register_user(self, email=None, password=None, **kwargs):
         email = email if email is not None else self.random_username()
@@ -91,8 +105,9 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def delete_account(self, token, password):
         return self.client.delete_account(token, password)
 
-    def verify(self, verification_code, **kwargs):
-        return self.client.verify(verification_code, **kwargs)
+    def assertContains(self, response, text, count=None, status_code=200, msg_prefix='', html=False):
+        self.assertStatus(response, status_code)  # This is checked later again, but our error message is nicer
+        super().assertContains(response, text, count, status_code, msg_prefix, html)
 
     def assertPassword(self, email, password):
         self.assertTrue(User.objects.get(email=email).check_password(password),
@@ -137,34 +152,34 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def assertRegistrationEmail(self, recipient, reset=True):
         return self.assertEmailSent(
             subject_contains='deSEC',
-            body_contains='welcome',
+            body_contains='Thank you for registering with deSEC!',
             recipient=[recipient],
             reset=reset,
-            pattern=r'verification code: ([^\s]*)',
+            pattern=r'following link:\s+([^\s]*)',
         )
 
     def assertResetPasswordEmail(self, recipient, reset=True):
         return self.assertEmailSent(
             subject_contains='Password reset',
-            body_contains='verification code',
+            body_contains='We received a request to reset the password for your deSEC account.',
             recipient=[recipient],
             reset=reset,
-            pattern=r'verification code: ([^\s]*)',
+            pattern=r'following link:\s+([^\s]*)',
         )
 
     def assertChangeEmailVerificationEmail(self, recipient, reset=True):
         return self.assertEmailSent(
             subject_contains='Confirmation required: Email address change',
-            body_contains='verification code',
+            body_contains='You requested to change the email address associated',
             recipient=[recipient],
             reset=reset,
-            pattern=r'verification code: ([^\s]*)',
+            pattern=r'following link:\s+([^\s]*)',
         )
 
     def assertChangeEmailNotificationEmail(self, recipient, reset=True):
         return self.assertEmailSent(
             subject_contains='Account email address changed',
-            body_contains='email address of your deSEC account has been changed to another address.',
+            body_contains='We\'re writing to let you know that the email address associated with',
             recipient=[recipient],
             reset=reset,
         )
@@ -172,10 +187,10 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def assertDeleteAccountEmail(self, recipient, reset=True):
         return self.assertEmailSent(
             subject_contains='Confirmation required: Delete account',
-            body_contains='verification code',
+            body_contains='confirm once more',
             recipient=[recipient],
             reset=reset,
-            pattern=r'verification code: ([^\s]*)',
+            pattern=r'following link:\s+([^\s]*)',
         )
 
     def assertRegistrationSuccessResponse(self, response):
@@ -205,7 +220,8 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
             response=response,
             text=("The requested domain {} could not be registered (reason: {}). "
                   "Please start over and sign up again.".format(domain, reason)),
-            status_code=status.HTTP_400_BAD_REQUEST
+            status_code=status.HTTP_400_BAD_REQUEST,
+            msg_prefix=str(response.data)
         )
 
     def assertRegistrationVerificationSuccessResponse(self, response):
@@ -317,7 +333,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         self.assertFalse(User.objects.get(email=email).is_active)
         self.assertPassword(email, password)
         verification_code = self.assertRegistrationEmail(email)
-        self.assertRegistrationVerificationSuccessResponse(self.verify(verification_code))
+        self.assertRegistrationVerificationSuccessResponse(self.client.verify_activation(verification_code))
         self.assertTrue(User.objects.get(email=email).is_active)
         self.assertPassword(email, password)
         return email, password
@@ -337,8 +353,8 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
                 cm = self.requests_desec_domain_creation_auto_delegation(domain)
             else:
                 cm = self.requests_desec_domain_creation(domain)
-            with self.assertPdnsRequests(cm):
-                response = self.verify(verification_code)
+            with self.assertPdnsRequests(cm[:-1]):
+                response = self.client.verify_activation(verification_code)
             self.assertRegistrationWithDomainVerificationSuccessResponse(response, domain)
             self.assertTrue(User.objects.get(email=email).is_active)
             self.assertPassword(email, password)
@@ -346,7 +362,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
             return email, password, domain
         else:
             domain_exists = Domain.objects.filter(name=domain).exists()
-            response = self.verify(verification_code)
+            response = self.client.verify_activation(verification_code)
             self.assertRegistrationFailureDomainUnavailableResponse(response, domain, expect_failure_reason)
             self.assertUserDoesNotExist(email)
             self.assertEqual(Domain.objects.filter(name=domain).exists(), domain_exists)
@@ -360,7 +376,8 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         new_password = new_password or self.random_password()
         self.assertResetPasswordSuccessResponse(self.reset_password(email))
         verification_code = self.assertResetPasswordEmail(email)
-        self.assertResetPasswordVerificationSuccessResponse(self.verify(verification_code, password=new_password))
+        self.assertResetPasswordVerificationSuccessResponse(
+            self.client.verify_reset_password(verification_code, new_password=new_password))
         self.assertPassword(email, new_password)
         return new_password
 
@@ -369,7 +386,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         new_email = self.random_username()
         self.assertChangeEmailSuccessResponse(self.change_email(password, new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
-        self.assertChangeEmailVerificationSuccessResponse(self.verify(verification_code))
+        self.assertChangeEmailVerificationSuccessResponse(self.client.verify_change_email(verification_code))
         self.assertChangeEmailNotificationEmail(old_email)
         self.assertUserExists(new_email)
         self.assertUserDoesNotExist(old_email)
@@ -379,7 +396,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def _test_delete_account(self, email, password, token):
         self.assertDeleteAccountSuccessResponse(self.delete_account(token, password))
         verification_code = self.assertDeleteAccountEmail(email)
-        self.assertDeleteAccountVerificationSuccessResponse(self.verify(verification_code))
+        self.assertDeleteAccountVerificationSuccessResponse(self.client.verify_delete(verification_code))
         self.assertUserDoesNotExist(email)
 
 
@@ -482,7 +499,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def _finish_reset_password(self, verification_code, expect_success=True):
         new_password = self.random_password()
-        response = self.verify(verification_code, password=new_password)
+        response = self.client.verify_reset_password(verification_code, new_password=new_password)
         if expect_success:
             self.assertResetPasswordVerificationSuccessResponse(response=response)
         else:
@@ -490,7 +507,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
         return new_password
 
     def _finish_change_email(self, verification_code, expect_success=True):
-        response = self.verify(verification_code)
+        response = self.client.verify_change_email(verification_code)
         if expect_success:
             self.assertChangeEmailVerificationSuccessResponse(response)
             self.assertChangeEmailNotificationEmail(self.email)
@@ -498,7 +515,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
             self.assertVerificationFailureInvalidCodeResponse(response)
 
     def _finish_delete_account(self, verification_code):
-        self.assertDeleteAccountVerificationSuccessResponse(self.verify(verification_code))
+        self.assertDeleteAccountVerificationSuccessResponse(self.client.verify_delete(verification_code))
         self.assertUserDoesNotExist(self.email)
 
     def test_view_account(self):
@@ -541,7 +558,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
         verification_code = self._start_reset_password()
         self._test_delete_account(self.email, self.password, self.token)
         self.assertVerificationFailureUnknownUserResponse(
-            response=self.verify(verification_code)
+            response=self.client.verify_reset_password(verification_code)
         )
         self.assertNoEmailSent()
 
@@ -573,7 +590,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
         new_email, new_password = self._test_registration(new_email)
         self.assertChangeEmailFailureAddressTakenResponse(
-            response=self.verify(verification_code)
+            response=self.client.verify_change_email(verification_code)
         )
         self.assertUserExists(self.email)
         self.assertPassword(self.email, self.password)
@@ -584,18 +601,12 @@ class HasUserAccountTestCase(UserManagementTestCase):
         new_email = self.random_username()
         self.assertChangeEmailSuccessResponse(self.change_email(self.password, new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
-        self.assertChangeEmailVerificationFailureChangePasswordResponse(
-            response=self.verify(verification_code, password=self.random_password())
+        self.assertChangeEmailSuccessResponse(
+            response=self.client.verify_change_email(verification_code, password=self.random_password())
         )
-        self.assertUserExists(self.email)
-        self.assertUserDoesNotExist(new_email)
-        self.assertPassword(self.email, self.password)
-        self.assertChangeEmailVerificationSuccessResponse(
-            response=self.verify(verification_code)
-        )
-        self.assertUserDoesNotExist(self.email)
         self.assertUserExists(new_email)
-        self.assertPassword(new_email, self.password)
+        self.assertUserDoesNotExist(self.email)
+        self.assertPassword(self.email, self.password)
 
     def test_change_email_same_email(self):
         self.assertChangeEmailFailureSameAddressResponse(
@@ -655,7 +666,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
         verification_code, new_email = self._start_change_email()
         self._test_delete_account(self.email, self.password, self.token)
         self.assertVerificationFailureUnknownUserResponse(
-            response=self.verify(verification_code)
+            response=self.client.verify_change_email(verification_code)
         )
         self.assertNoEmailSent()
 
@@ -663,16 +674,35 @@ class HasUserAccountTestCase(UserManagementTestCase):
         verification_code = self._start_delete_account()
         self._test_delete_account(self.email, self.password, self.token)
         self.assertVerificationFailureUnknownUserResponse(
-            response=self.verify(verification_code)
+            response=self.client.verify_delete(verification_code)
         )
         self.assertNoEmailSent()
 
 
-class VerifySerializerTestCase(DesecTestCase):
+class SignedUserActionTestCase(DesecTestCase):
 
     def setUp(self):
         super().setUp()
         self.user = self.create_user()
+
+    def test_has_signature(self):
+        action = UserAction(user=self.user)
+        representation = SignedUserAction(instance=action).data
+        self.assertIn(SignedUserAction.SIGNATURE_FIELD, representation.keys())
+        self.assertGreater(len(representation[SignedUserAction.SIGNATURE_FIELD]), 10)
+
+    def test_verifies_signature(self):
+        action = UserAction(user=self.user)
+        representation = SignedUserAction(instance=action).data
+        serializer = SignedUserAction(data=representation)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        representation[SignedUserAction.SIGNATURE_FIELD] += 'x'
+        with self.assertRaises(ValidationError):
+            serializer = SignedUserAction(data=representation)
+            serializer.is_valid()
+            serializer.save()
 
     def test_signature_varies_by_secret(self):
         data = {'user': self.user, 'action': 'test', 'timestamp': int(time.time())}
@@ -684,15 +714,15 @@ class VerifySerializerTestCase(DesecTestCase):
         signatures = []
         for secret in secrets:
             with override_settings(SECRET_KEY=secret):
-                serializer_data1 = VerifySerializer(data).data
-                serializer_data2 = VerifySerializer(data).data
+                serializer_data1 = SignedUserAction(data).data
+                serializer_data2 = SignedUserAction(data).data
                 self.assertEqual(serializer_data1['signature'], serializer_data2['signature'])
                 signatures.append(serializer_data1['signature'])
 
         self.assertTrue(len(set(signatures)) == len(secrets))
 
     def test_missing_fields(self):
-        serializer = VerifySerializer(data={})
+        serializer = SignedUserAction(data={})
         with self.assertRaises(ValidationError) as cm:
             serializer.is_valid(raise_exception=True)
         self.assertTrue(all(all(item.code == 'required' for item in field_detail)
@@ -700,26 +730,32 @@ class VerifySerializerTestCase(DesecTestCase):
         self.assertEqual(cm.exception.detail.keys(), {'action', 'user', 'signature', 'timestamp'})
 
     def test_fake_action(self):
-        data = {'user': self.user, 'action': 'activate'}
-        serializer_data = VerifySerializer(data).data
+        action = UserAction(user=self.user)
+        serializer_data = SignedUserAction(action).data
+        signed_data = json.loads(base64.urlsafe_b64decode(serializer_data['verification_code'].encode()).decode())
+        signed_data['action'] = 'activate'
+        serializer_data['verification_code'] = base64.urlsafe_b64encode(json.dumps(signed_data).encode()).decode()
 
-        serializer = VerifySerializer(data=serializer_data)
+        serializer = SignedUserAction(data=serializer_data)
         serializer.is_valid(raise_exception=True)
+        serializer.act()
 
-        serializer_data['action'] = 'test'
-        serializer = VerifySerializer(data=serializer_data)
+        signed_data['action'] = 'test'
+        serializer_data['verification_code'] = base64.urlsafe_b64encode(json.dumps(signed_data).encode()).decode()
+        serializer = SignedUserAction(data=serializer_data)
         with self.assertRaises(ValidationError):
             serializer.is_valid(raise_exception=True)
+            serializer.act()
 
     def test_fake_email(self):
-        data = VerifySerializer({'user': self.user, 'action': 'change-email', 'email': self.random_username()}).data
+        data = SignedUserAction({'user': self.user, 'action': 'change_email', 'email': self.random_username()}).data
         data['email'] = self.random_username()
         response = self.client.post(reverse('v1:verify'), data)
         self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
     def test_fake_timestamp(self):
-        data = VerifySerializer({'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}).data
+        data = SignedUserAction({'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}).data
         data['timestamp'] += 1
         response = self.client.post(reverse('v1:verify'), data)
         self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -730,7 +766,7 @@ class VerifySerializerTestCase(DesecTestCase):
         self.assertEquals(response.status_code, status.HTTP_200_OK)
 
     def test_fake_signature(self):
-        data = VerifySerializer({'user': self.user, 'action': 'activate'}).data
+        data = SignedUserAction({'user': self.user, 'action': 'activate'}).data
         data['signature'] = data['signature'][::-1]  # Reverse
         response = self.client.post(reverse('v1:verify'), data)
         self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -738,7 +774,7 @@ class VerifySerializerTestCase(DesecTestCase):
 
     def test_fake_user(self):
         fake_user = self.create_user()
-        data = VerifySerializer({'user': self.user, 'action': 'activate'}).data
+        data = SignedUserAction({'user': self.user, 'action': 'activate'}).data
         data['user'] = fake_user.pk
         response = self.client.post(reverse('v1:verify'), data)
         self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -754,12 +790,12 @@ class VerifySerializerTestCase(DesecTestCase):
 
         @mock.patch('time.time', mock_time)
         def _construct_expired_serializer_data(data):
-            return VerifySerializer(data)
+            return SignedUserAction(data)
 
         def _run(delay):
             mock_time.return_value = time.time() - settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE + delay
             data = _construct_expired_serializer_data({'user': self.user, 'action': 'activate'}).data
-            response = self.client.post(reverse('v1:verify'), data)
+            response = self.client.post(reverse('v1:verify', kwargs={'action': 'activate'}), data)
 
             if delay >= 0:
                 self.assertEquals(response.status_code, status.HTTP_200_OK)
@@ -770,9 +806,9 @@ class VerifySerializerTestCase(DesecTestCase):
                 return False
 
         failed_delays = set()
-        for delay in [-1, 0, 1]:
-            success = _run(delay)
+        for d in [-1, 0, 1]:
+            success = _run(d)
             if not success:
-                failed_delays.add(delay)
+                failed_delays.add(d)
 
         self.assertEquals(failed_delays, {-1})

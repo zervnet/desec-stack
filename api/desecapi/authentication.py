@@ -1,5 +1,4 @@
 import base64
-import time
 
 from rest_framework import exceptions, HTTP_HEADER_ENCODING
 from rest_framework.authentication import (
@@ -8,9 +7,8 @@ from rest_framework.authentication import (
     TokenAuthentication as RestFrameworkTokenAuthentication,
 )
 
-from api import settings
-from desecapi.crypto import verify as verify_signature
-from desecapi.models import Token, User
+from desecapi.models import Token
+from desecapi.serializers import SignedUserAction
 
 
 class TokenAuthentication(RestFrameworkTokenAuthentication):
@@ -108,36 +106,20 @@ class SignatureAuthentication(BaseAuthentication):
     """
     Authentication against signature as provided in request data.
 
-    For successful authentication, request.data is required to have the following fields:
-    - timestamp: int, UNIX timestamp
-    - user: primary key of the User model
-    - signature: str, cryptographic signature
-    To pass validation, depending on the signature other fields may be required.
+    For successful authentication, request.data is required to pass validation and signature verification by
+    the SignedUserAction serializer.
     """
 
     def authenticate(self, request):
         """
-        Returns a `User` if the request is correctly signed and the user exists.
-        Otherwise returns `None`.
+        Returns a `User, None` if the request is correctly signed and the user exists.
+        Otherwise returns `None, None`.
+        Raises ValidationError exception when the payload cannot be validated.
         Raises AuthenticationFailed exception when the signature cannot be verified or is expired.
         """
-
-        data = request.data.copy()
-
-        if 'timestamp' in data:
-            expiration_time = data['timestamp'] + settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE
-        else:
-            expiration_time = None
-
-        if expiration_time is not None and expiration_time < int(time.time()):
-            raise exceptions.AuthenticationFailed('Signature expired.')
-
-        try:
-            data['user'] = User.objects.get(pk=data['user'])
-        except User.DoesNotExist:
-            return None, None  # TODO no exception here?
-
-        if not verify_signature(data):
+        serializer = SignedUserAction(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if not serializer.is_signature_valid():
             raise exceptions.AuthenticationFailed('Bad signature.')
 
-        return data['user'], None
+        return serializer.instance.user, None

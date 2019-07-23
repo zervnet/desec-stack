@@ -6,7 +6,7 @@ please shoot us an email so that we can improve whatever is not right.
 
 Otherwise, we will delete your account, including all related data.
 Before we do so, we need you to confirm once more that this is what you
-really, really want.
+really, really want by clicking the following link:
 
 {{ verification_code }}
 

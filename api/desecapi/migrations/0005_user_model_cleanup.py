@@ -6,7 +6,7 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('desecapi', '0003_validation'),
+        ('desecapi', '0004_domain_minimum_ttl'),
     ]
 
     operations = [

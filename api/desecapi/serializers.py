@@ -1,18 +1,24 @@
+import binascii
+import json
 import re
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from json import JSONDecodeError
 
 import psl_dns
 from django.contrib.auth import authenticate
+from django.core.signing import Signer
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
+from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 from rest_framework.serializers import ListSerializer
 from rest_framework.settings import api_settings
-from rest_framework.validators import UniqueTogetherValidator
+from rest_framework.validators import UniqueTogetherValidator, UniqueValidator, qs_filter
 
 from api import settings
-from desecapi.crypto import sign
-from desecapi.models import Domain, Donation, User, RRset, Token, RR
-from desecapi.pdns_change_tracker import PDNSChangeTracker
+from desecapi.models import Domain, Donation, User, RRset, Token, RR, UserAction, ActivateUserAction, ChangeEmailAction, \
+    DeleteUserAction, ResetPasswordAction
 
 
 class TokenSerializer(serializers.ModelSerializer):
@@ -486,22 +492,6 @@ class DomainSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(msg, code='domain_limit')
         return attrs
 
-    def create(self, validated_data):
-        # Create domain
-        with PDNSChangeTracker():  # TODO I believe this is view-business
-            domain = super().create(validated_data)
-
-        # Autodelegation  # TODO I believe this is view-business
-        parent_domain_name = domain.partition_name()[1]
-        if parent_domain_name in settings.LOCAL_PUBLIC_SUFFIXES:
-            parent_domain = Domain.objects.get(name=parent_domain_name)
-            # NOTE we need two change trackers here, as the first transaction must be committed to
-            # pdns in order to have keys available for the delegation
-            with PDNSChangeTracker():
-                parent_domain.update_delegation(domain)
-
-        return domain
-
 
 class DonationSerializer(serializers.ModelSerializer):
 
@@ -591,112 +581,97 @@ class LoginSerializer(EmailSerializer, BasePasswordSerializer):
         return attrs
 
 
-class VerifySerializer(serializers.Serializer):
-    action = serializers.ChoiceField(choices=[
-        'activate',
-        'activate-with-domain',
-        'change-email',
-        'change-password',
-        'delete'
-    ])
+class SignedUserAction(serializers.ModelSerializer):
+    # regular model fields
     user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         error_messages={'does_not_exist': 'This user does not exist.'}  # TODO this validation may happen before the
                                                                         #  signature validation?
     )
-    email = serializers.EmailField(required=False)
-    password = serializers.CharField(required=False, trim_whitespace=False)
-    domain = serializers.CharField(required=False)  # TODO do we need more validation?
+
+    # property-based model fields
+    action = serializers.CharField()
     signature = serializers.CharField()
-    timestamp = serializers.IntegerField()
 
-    def to_representation(self, instance):
-        # Having email and password at the same time is currently not a use case
-        assert not (instance.get('email') and instance.get('password'))  # TODO assertion failure will result in 500 status
-        signed_instance = sign(instance)
-        ret = super().to_representation(signed_instance)
-        assert '@' not in str(ret['user'])  # make sure the user representation does not expose the email address
-        # TODO replace the previous line with a Django test
-        return ret
+    class Meta:
+        model = UserAction
+        fields = ('action', 'user', 'signature', 'timestamp')
 
-    def validate(self, attrs):
-        # Signature gets validated through authentication
-        self.user = self.context['request'].user if 'request' in self.context else None
+    def to_representation(self, instance: UserAction):
+        # do the regular business
+        data = super().to_representation(instance)
 
-        # First, verify presence of expected fields only
-        allowed_fields_by_action = {
-            'activate': [],
-            'activate-with-domain': ['domain'],
-            'change-email': ['email'],
-            'change-password': ['password'],
-            'delete': [],
-        }
-        action = attrs['action']
-        allowed_fields = allowed_fields_by_action[action] + ['action', 'user', 'signature', 'timestamp']
-        # TODO its a common pattern to ignore extra fields for compatibility. Do we have good reason to be so strict
-        #  here?
-        message_dict = {field: 'This field is not allowed for action {}.'.format(action)
-                        for field in self.initial_data if field not in allowed_fields}
+        # encode into single string
+        return {'verification_code': urlsafe_b64encode(json.dumps(data).encode()).decode()}
 
-        # Second, action-dependent stuff
-        if action == 'change-email' and User.objects.filter(email=attrs['email']).exists():
-            message_dict['email'] = 'You already have another account with this email address.'
-
-        if action == 'activate-with-domain':
-            serializer = DomainSerializer(data={'name': attrs['domain']}, context=self.context)
-            try:
-                serializer.is_valid(raise_exception=True)
-            except serializers.ValidationError as e:
-                if 'name' in e.detail:
-                    e.detail['domain'] = e.detail.pop('name')
-                raise e
-
-        # If necessary, raise validation error
-        if message_dict:
-            raise serializers.ValidationError(detail=message_dict)
-
-        return attrs
-
-    def _save_activate(self):
-        self.user.activate()
-
-    def _save_activate_with_domain(self):
-        # TODO encapsulate this into a transaction?
-        #  if not in a transaction, we won't be able to send another email after account activation
-
-        # Activate user
-        self._save_activate()
-
-        # Create domain
-        serializer = DomainSerializer(data={'name': self.validated_data['domain']}, context=self.context)
+    def to_internal_value(self, data):
+        # decode from single string
         try:
-            serializer.is_valid(raise_exception=True)
-            serializer.save(owner=self.user)
-        except serializers.ValidationError as e:  # e.g. domain name unavailable
-            self.user.delete()
+            unpacked_data = json.loads(urlsafe_b64decode(data.get('verification_code', '').encode()).decode())
+        except (JSONDecodeError, binascii.Error):
+            # TODO list of exceptions complete?
+            raise ValidationError('Invalid verification code.')
 
-    def _save_change_email(self):
-        self.user.change_email(self.validated_data['email'])
+        # add extra fields added by the user
+        unpacked_data.update(**data)
 
-    def _save_change_password(self):
-        assert 'email' not in self.validated_data
-        self.user.change_password(self.validated_data['password'])
+        # do the regular business
+        return super().to_internal_value(unpacked_data)
 
-    def _save_delete(self):
-        self.user.delete()
+    def is_signature_valid(self):
+        if not self.instance:
+            # remove property-based fields
+            validated_data = {**self.validated_data}
+            for field_name in ['signature', 'action']:
+                validated_data.pop(field_name)
 
-    def save(self):
-        # TODO One way to make the VerifySerializer code a bit cleaner could be to derive multiple
-        #  VerifySerializer classes for the various actions, and then either distinguish in the view,
-        #  based on the action attribute, or distinguish in the router based on the URL.
-        action_functions = {
-            'activate': self._save_activate,
-            'activate-with-domain': self._save_activate_with_domain,
-            'change-email': self._save_change_email,
-            'change-password': self._save_change_password,
-            'delete': self._save_delete
+            # instanciate
+            self.instance = self.Meta.model(**validated_data)
+
+        return constant_time_compare(
+            self.validated_data['signature'],
+            self.instance.signature(self.validated_data['action']),
+        )
+
+    def act(self):
+        if not self.is_signature_valid():
+            raise ValidationError(code='bad_sig')
+        self.instance.act()
+        return self.instance
+
+    def save(self, **kwargs):
+        raise ValueError
+
+
+class ActivateUserSignedUserAction(SignedUserAction):
+    action = serializers.CharField(default='activate')
+
+    class Meta(SignedUserAction.Meta):
+        model = ActivateUserAction
+        extra_kwargs = {
+            'domain': {'required': False, 'allow_blank': True, 'allow_null': True}
         }
-        action = self.validated_data['action']
-        action_functions[action]()
 
-        return self.user
+
+class ChangeEmailSignedUserAction(SignedUserAction):
+
+    class Meta(SignedUserAction.Meta):
+        model = ChangeEmailAction
+        fields = SignedUserAction.Meta.fields + ('new_email',)
+        extra_kwargs = {
+            'new_email': {'required': True}
+        }
+
+
+class ChangePasswordSignedUserAction(SignedUserAction):
+    new_password = serializers.CharField(write_only=True)
+
+    class Meta(SignedUserAction.Meta):
+        model = ResetPasswordAction
+        fields = SignedUserAction.Meta.fields + ('new_password',)
+
+
+class DeleteUserSignedUserAction(SignedUserAction):
+
+    class Meta(SignedUserAction.Meta):
+        model = DeleteUserAction

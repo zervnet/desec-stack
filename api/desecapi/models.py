@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import random
 import time
@@ -12,6 +13,8 @@ import rest_framework.authtoken.models
 from django.conf import settings
 from django.contrib.auth.models import BaseUserManager, AbstractBaseUser
 from django.core.exceptions import ValidationError
+from django.core.mail import EmailMessage
+from django.core.signing import Signer
 from django.core.validators import RegexValidator
 from django.db import models
 from django.db.models import Manager
@@ -200,6 +203,12 @@ class Domain(models.Model):
     def keys(self):
         return pdns.get_keys(self)
 
+    def has_local_public_suffix(self):
+        return self.partition_name()[1] in settings.LOCAL_PUBLIC_SUFFIXES
+
+    def parent_domain_name(self):
+        return self.partition_name()[1]
+
     def partition_name(domain):
         name = domain.name if isinstance(domain, Domain) else domain
         subname, _, parent_name = name.partition('.')
@@ -356,30 +365,78 @@ class RR(models.Model):
         return '<RR %s>' % self.content
 
 
-class ValidatedUserAction(models.Model):
+class UserAction(models.Model):
     user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
-    domain = models.CharField(max_length=191,
-                              blank=True,
-                              validators=[validate_lower,
-                                          RegexValidator(regex=r'^[a-z0-9_.-]*[a-z]$',
-                                                         message='Invalid value (not a DNS name).',
-                                                         code='invalid_domain_name')
-                                          ])  # TODO copied from models.Domain
+    timestamp = models.PositiveIntegerField(default=lambda: int(time.time()))
 
     class Meta:
         managed = False
 
+    @property
+    def action(self):
+        return ACTION_NAMES[self.__class__]
 
-class ActivateUserAction(ValidatedUserAction):
-    action = 'activate'
+    def signature(self, action=None):
+        data = {
+            'user_pk': self.user.id,
+            'user_email': self.user.email,
+            'user_password': self.user.password,
+            'user_is_active': self.user.is_active,
+            'timestamp': self.timestamp,
+            'action': action or self.action,
+        }
+
+        # hash and sign
+        return Signer().signature(json.dumps(data))
+
+    def act(self):
+        pass
+
+
+class ActivateUserAction(UserAction):
+    domain = models.CharField(max_length=191)
 
     class Meta:
         managed = False
 
+    def act(self):
+        self.user.activate()
 
-class ChangeEmailAction(ValidatedUserAction):
-    action = 'change-email'
+
+class ChangeEmailAction(UserAction):
     new_email = models.EmailField()
 
     class Meta:
         managed = False
+
+    def act(self):
+        self.user.change_email(self.new_email)
+
+
+class ResetPasswordAction(UserAction):
+    new_password = models.CharField(max_length=128)
+
+    class Meta:
+        managed = False
+
+    def act(self):
+        self.user.change_password(self.new_password)
+
+
+class DeleteUserAction(UserAction):
+
+    class Meta:
+        managed = False
+
+    def act(self):
+        self.user.delete()
+
+
+ACTION_CLASSES = {
+    'none': UserAction,
+    'activate': ActivateUserAction,
+    'change_email': ChangeEmailAction,
+    'reset_password': ResetPasswordAction,
+    'delete': DeleteUserAction,
+}
+ACTION_NAMES = {c: n for n, c in ACTION_CLASSES.items()}

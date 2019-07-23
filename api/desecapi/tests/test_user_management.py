@@ -601,12 +601,12 @@ class HasUserAccountTestCase(UserManagementTestCase):
         new_email = self.random_username()
         self.assertChangeEmailSuccessResponse(self.change_email(self.password, new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
-        self.assertChangeEmailSuccessResponse(
+        self.assertChangeEmailVerificationSuccessResponse(
             response=self.client.verify_change_email(verification_code, password=self.random_password())
         )
         self.assertUserExists(new_email)
         self.assertUserDoesNotExist(self.email)
-        self.assertPassword(self.email, self.password)
+        self.assertPassword(new_email, self.password)
 
     def test_change_email_same_email(self):
         self.assertChangeEmailFailureSameAddressResponse(

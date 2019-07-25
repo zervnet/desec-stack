@@ -367,6 +367,23 @@ class RR(models.Model):
 
 
 class AuthenticatedAction(models.Model):
+    """
+    Represents an procedure call on a defined set of arguments.
+
+    Subclasses can define additional arguments by adding Django model fields and must define the action to be taken by
+    implementing the `act` method.
+
+    AuthenticatedAction provides the `mac` property that returns a Message Authentication Code (MAC) based on the
+    state. By default, the state contains the action's name (defined by the `action` property) and a timestamp; the
+    state can be extended by (carefully) overriding the `signature_data` method. Any AuthenticatedAction instance of
+    the same subclass and state will deterministically have the same MAC, effectively allowing authenticated
+    procedure calls by third parties according to the following protocol:
+
+    (1) Instanciate the AuthenticatedAction subclass representing the action to be taken with the desired state,
+    (2) provide information on how to instanciate the instance and the MAC to a third party,
+    (3) when provided with data that allows instanciation and a valid MAC, take the defined action, possibly with
+        additional parameters chosen by the third party that do not belong to the verified state.
+    """
     timestamp = models.PositiveIntegerField(default=lambda: int(datetime.timestamp(datetime.now())))
 
     class Meta:
@@ -417,11 +434,14 @@ class AuthenticatedAction(models.Model):
         check_time = check_time or datetime.now()
         return check_time - issue_time <= validity_period
 
+    # TODO rethink naming convention: Message Authentication Code, but signature_data? Consequently, below method
+    #  should be called 'message' or 'message_data'. According the the doc, it should be called 'state'.
     def signature_data(self):
         """
         Returns an ordered list that defines the state of this user action. The signature of this action will be valid
         unless the state changes, therefore if any data included in the return value of this function changes, the
-        signature will change.
+        signature will change. (Technically speaking, the 'state' is the message that `mac` will return the Message
+        Authentication Code for.)
 
         If data is not included in the return value of this function, the signature will be independent of this data.
 
@@ -448,6 +468,10 @@ class AuthenticatedAction(models.Model):
 
 
 class AuthenticatedUserAction(AuthenticatedAction):
+    """
+    Abstract AuthenticatedAction involving an user instance, incorporating the user's id, email, password, and
+    is_active flag into the Message Authentication Code state.
+    """
     user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
 
     class Meta:

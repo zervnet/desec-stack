@@ -602,20 +602,25 @@ class CustomFieldNameUniqueValidator(UniqueValidator):
 
 
 class AuthenticatedActionSerializer(serializers.ModelSerializer):
+    PACKED_DATA_FIELD_NAME = 'verification_code'
+    PACKED_DATA_FIELD_NAME_SHORT = 'c'
+
     mac = serializers.CharField()  # serializer read-write, but model read-only field
 
     class Meta:
         model = AuthenticatedAction
         fields = ('action', 'mac', 'timestamp')
 
-    @staticmethod
-    def _pack(unpacked_data):
-        return {'verification_code': urlsafe_b64encode(json.dumps(unpacked_data).encode()).decode()}
+    @classmethod
+    def _pack(cls, unpacked_data):
+        return {cls.PACKED_DATA_FIELD_NAME: urlsafe_b64encode(json.dumps(unpacked_data).encode()).decode()}
 
-    @staticmethod
-    def _unpack(packed_data):
+    @classmethod
+    def _unpack(cls, packed_data):
         try:
-            return json.loads(urlsafe_b64decode(packed_data['verification_code'].encode()).decode())
+            verification_code = packed_data.get(cls.PACKED_DATA_FIELD_NAME) or \
+                                packed_data[cls.PACKED_DATA_FIELD_NAME_SHORT]
+            return json.loads(urlsafe_b64decode(verification_code.encode()).decode())
         except KeyError:
             raise ValidationError('No verification code.')
         except (TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):

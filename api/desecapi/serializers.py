@@ -583,7 +583,7 @@ class AuthenticatedActionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AuthenticatedAction
-        fields = ('action', 'mac', 'timestamp')
+        fields = ('name', 'mac', 'timestamp')
 
     @classmethod
     def _pack(cls, unpacked_data):

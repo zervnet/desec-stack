@@ -373,7 +373,7 @@ class AuthenticatedAction(models.Model):
     implementing the `act` method.
 
     AuthenticatedAction provides the `mac` property that returns a Message Authentication Code (MAC) based on the
-    state. By default, the state contains the action's name (defined by the `action` property) and a timestamp; the
+    state. By default, the state contains the action's name (defined by the `name` property) and a timestamp; the
     state can be extended by (carefully) overriding the `signature_data` method. Any AuthenticatedAction instance of
     the same subclass and state will deterministically have the same MAC, effectively allowing authenticated
     procedure calls by third parties according to the following protocol:
@@ -394,7 +394,7 @@ class AuthenticatedAction(models.Model):
         super().__init__(*args, **kwargs)
 
     @property
-    def action(self):
+    def name(self):
         """
         Returns a human-readable string containing the name of this action class that uniquely identifies this action.
         """
@@ -455,7 +455,7 @@ class AuthenticatedAction(models.Model):
 
         :return: List of values to be signed.
         """
-        return [self.timestamp, self.action]
+        return [self.timestamp, self.name]
 
     def act(self):
         """
@@ -477,7 +477,7 @@ class AuthenticatedUserAction(AuthenticatedAction):
         managed = False
 
     @property
-    def action(self):
+    def name(self):
         raise NotImplementedError
 
     def signature_data(self):
@@ -494,7 +494,7 @@ class AuthenticatedActivateUserAction(AuthenticatedUserAction):
         managed = False
 
     @property
-    def action(self):
+    def name(self):
         return 'user/activate'
 
     def act(self):
@@ -508,7 +508,7 @@ class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
         managed = False
 
     @property
-    def action(self):
+    def name(self):
         return 'user/change_email'
 
     def signature_data(self):
@@ -525,7 +525,7 @@ class AuthenticatedResetPasswordUserAction(AuthenticatedUserAction):
         managed = False
 
     @property
-    def action(self):
+    def name(self):
         return 'user/reset_password'
 
     def act(self):
@@ -538,7 +538,7 @@ class AuthenticatedDeleteUserAction(AuthenticatedUserAction):
         managed = False
 
     @property
-    def action(self):
+    def name(self):
         return 'user/delete'
 
     def act(self):

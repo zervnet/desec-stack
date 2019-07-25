@@ -575,7 +575,7 @@ class AuthenticatedActionView(GenericAPIView):
         self.authenticated_action.act()
 
         # execute post-handler, if any
-        post_handler_method_name = 'post_%s' % self.authenticated_action.action.replace('/', '__')
+        post_handler_method_name = 'post_%s' % self.authenticated_action.name.replace('/', '__')
         post_handler = getattr(self, post_handler_method_name, None)
         if post_handler:
             return post_handler()

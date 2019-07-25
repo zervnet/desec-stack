@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 import random
 import time
 import uuid
 from base64 import b64encode
+from datetime import datetime, timedelta
 from os import urandom
 
 import rest_framework.authtoken.models
@@ -20,6 +20,7 @@ from django.db import models
 from django.db.models import Manager
 from django.template.loader import get_template
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from rest_framework.exceptions import APIException
 
 from desecapi import pdns
@@ -250,7 +251,7 @@ def get_default_value_created():
 
 
 def get_default_value_due():
-    return timezone.now() + datetime.timedelta(days=7)
+    return timezone.now() + timedelta(days=7)
 
 
 def get_default_value_mref():
@@ -365,35 +366,90 @@ class RR(models.Model):
         return '<RR %s>' % self.content
 
 
-class UserAction(models.Model):
+class AuthenticatedUserAction(models.Model):
     user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
-    timestamp = models.PositiveIntegerField(default=lambda: int(time.time()))
+    timestamp = models.PositiveIntegerField(default=lambda: int(datetime.timestamp(datetime.now())))
 
     class Meta:
         managed = False
 
+    def __init__(self, *args, **kwargs):
+        # silently ignore any value supplied for the mac value
+        mac = kwargs.pop('mac', None)
+        super().__init__(*args, **kwargs)
+
     @property
     def action(self):
+        """
+        Returns a human-readable string containing the name of this action class that uniquely identifies this action.
+        """
         return ACTION_NAMES[self.__class__]
 
-    def signature(self, action=None):
-        data = {
+    @property
+    def mac(self):
+        """
+        Deterministically generates a message authentication code (MAC) for this action, based on the state as defined
+        by `self.signature_data`. Identical state is guaranteed to yield identical MAC.
+        :return:
+        """
+        return Signer().signature(json.dumps(self.signature_data()))
+
+    def check_mac(self, mac):
+        """
+        Checks if the message authentication code (MAC) provided by the first argument matches the state of this action.
+        Note that the timestamp is not verified by this method.
+        :param mac: Message Authentication Code
+        :return: True, if MAC is valid; False otherwise.
+        """
+        return constant_time_compare(
+            mac,
+            self.mac,
+        )
+
+    def check_expiration(self, validity_period: timedelta):
+        """
+        Checks if the action's timestamp is no older than the given validity period. Note that the message
+        authentication code itself is not verified by this method.
+        :param validity_period: How long after issuance the MAC of this action is considered valid.
+        :return: True, if not considered expired; False otherwise -- i.e. True if valid, False if expired.
+        """
+        issue_time = datetime.fromtimestamp(self.timestamp)
+        check_time = datetime.now()
+        return check_time - issue_time <= validity_period
+
+    def signature_data(self):
+        """
+        Returns a dictionary that defines the state of this user action. The signature of this action will be valid
+        unless the state changes, therefore if any data included in the return value of this function changes, the
+        signature will change.
+
+        If data is not included in the return value of this function, the signature will be independent of this data.
+
+        Return value must be deterministic and JSON-serializable.
+
+        Use caution when overriding this method, usually you want the parent's return value to be included in the
+        final value.
+        :return: Data to be signed.
+        """
+        return {
             'user_pk': self.user.id,
             'user_email': self.user.email,
             'user_password': self.user.password,
             'user_is_active': self.user.is_active,
             'timestamp': self.timestamp,
-            'action': action or self.action,
+            'action': self.action,
         }
 
-        # hash and sign
-        return Signer().signature(json.dumps(data))
-
     def act(self):
-        pass
+        """
+        Conduct the action represented by this class. The result of the action will usually depend on the state of this
+        object.
+        :return: None
+        """
+        raise NotImplementedError
 
 
-class ActivateUserAction(UserAction):
+class AuthenticatedActivateUserAction(AuthenticatedUserAction):
     domain = models.CharField(max_length=191)
 
     class Meta:
@@ -403,17 +459,23 @@ class ActivateUserAction(UserAction):
         self.user.activate()
 
 
-class ChangeEmailAction(UserAction):
+class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
     new_email = models.EmailField()
 
     class Meta:
         managed = False
 
+    def signature_data(self):
+        data = super().signature_data()
+        assert 'new_email' not in data
+        data['new_email'] = self.new_email
+        return data
+
     def act(self):
         self.user.change_email(self.new_email)
 
 
-class ResetPasswordAction(UserAction):
+class AuthenticatedResetPasswordUserAction(AuthenticatedUserAction):
     new_password = models.CharField(max_length=128)
 
     class Meta:
@@ -423,7 +485,7 @@ class ResetPasswordAction(UserAction):
         self.user.change_password(self.new_password)
 
 
-class DeleteUserAction(UserAction):
+class AuthenticatedDeleteUserAction(AuthenticatedUserAction):
 
     class Meta:
         managed = False
@@ -433,10 +495,9 @@ class DeleteUserAction(UserAction):
 
 
 ACTION_CLASSES = {
-    'none': UserAction,
-    'activate': ActivateUserAction,
-    'change_email': ChangeEmailAction,
-    'reset_password': ResetPasswordAction,
-    'delete': DeleteUserAction,
+    'user/activate': AuthenticatedActivateUserAction,
+    'user/change_email': AuthenticatedChangeEmailUserAction,
+    'user/reset_password': AuthenticatedResetPasswordUserAction,
+    'user/delete': AuthenticatedDeleteUserAction,
 }
 ACTION_NAMES = {c: n for n, c in ACTION_CLASSES.items()}

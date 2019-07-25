@@ -8,7 +8,6 @@ from rest_framework.authentication import (
 )
 
 from desecapi.models import Token
-from desecapi.serializers import SignedUserAction
 
 
 class TokenAuthentication(RestFrameworkTokenAuthentication):
@@ -100,26 +99,3 @@ class URLParamAuthentication(BaseAuthentication):
             raise exceptions.AuthenticationFailed('badauth')
 
         return token.user, token
-
-
-class SignatureAuthentication(BaseAuthentication):
-    """
-    Authentication against signature as provided in request data.
-
-    For successful authentication, request.data is required to pass validation and signature verification by
-    the SignedUserAction serializer.
-    """
-
-    def authenticate(self, request):
-        """
-        Returns a `User, None` if the request is correctly signed and the user exists.
-        Otherwise returns `None, None`.
-        Raises ValidationError exception when the payload cannot be validated.
-        Raises AuthenticationFailed exception when the signature cannot be verified or is expired.
-        """
-        serializer = SignedUserAction(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        if not serializer.is_signature_valid():
-            raise exceptions.AuthenticationFailed('Bad signature.')
-
-        return serializer.instance.user, None

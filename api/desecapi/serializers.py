@@ -7,7 +7,6 @@ import psl_dns
 from django.contrib.auth import authenticate
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
-from django.utils.crypto import constant_time_compare
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 from rest_framework.serializers import ListSerializer
@@ -15,8 +14,9 @@ from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator, UniqueValidator, qs_filter
 
 from api import settings
-from desecapi.models import Domain, Donation, User, RRset, Token, RR, UserAction, ActivateUserAction, ChangeEmailAction, \
-    DeleteUserAction, ResetPasswordAction
+from desecapi.models import Domain, Donation, User, RRset, Token, RR, AuthenticatedUserAction, \
+    AuthenticatedActivateUserAction, AuthenticatedChangeEmailUserAction, \
+    AuthenticatedDeleteUserAction, AuthenticatedResetPasswordUserAction, ACTION_NAMES
 
 
 class TokenSerializer(serializers.ModelSerializer):
@@ -600,21 +600,24 @@ class CustomFieldNameUniqueValidator(UniqueValidator):
         return qs_filter(queryset, **filter_kwargs)
 
 
-class SignedUserAction(serializers.ModelSerializer):
+class ActionTypeSerializer(serializers.BaseSerializer):
+    action = serializers.ChoiceField(choices=ACTION_NAMES.values())
+
+
+class AuthenticatedUserAction(serializers.ModelSerializer):
     # regular model fields
     user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         error_messages={'does_not_exist': 'This user does not exist.'}  # TODO this validation may happen before the
-                                                                        #  signature validation?
+                                                                        #  mac validation?
     )
 
     # property-based model fields
-    action = serializers.CharField()
-    signature = serializers.CharField()
+    mac = serializers.CharField()
 
     class Meta:
-        model = UserAction
-        fields = ('action', 'user', 'signature', 'timestamp')
+        model = AuthenticatedUserAction
+        fields = ('action', 'user', 'mac', 'timestamp')
 
     @staticmethod
     def _pack(unpacked_data):
@@ -630,7 +633,7 @@ class SignedUserAction(serializers.ModelSerializer):
             # TODO list of exceptions complete?
             raise ValidationError('Invalid verification code.')
 
-    def to_representation(self, instance: UserAction):
+    def to_representation(self, instance: AuthenticatedUserAction):
         # do the regular business
         data = super().to_representation(instance)
 
@@ -647,24 +650,27 @@ class SignedUserAction(serializers.ModelSerializer):
         # do the regular business
         return super().to_internal_value(unpacked_data)
 
-    def is_signature_valid(self):
+    def _is_mac_valid(self, raise_exception=False):
         if not self.instance:
-            # remove property-based fields
-            validated_data = {**self.validated_data}
-            for field_name in ['signature', 'action']:
-                validated_data.pop(field_name)
+            self.instance = self.Meta.model(**self.validated_data)
 
-            # instanciate
-            self.instance = self.Meta.model(**validated_data)
+        # check if expired
+        expired = not self.instance.check_expiration(settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE)
+        if expired and raise_exception:
+            # TODO wording ("token"?)
+            raise ValidationError(detail='Token expired, please restart the process.', code='expired')
 
-        return constant_time_compare(
-            self.validated_data['signature'],
-            self.instance.signature(self.validated_data['action']),
-        )
+        # check if MAC valid
+        mac_valid = self.instance.check_mac(self.validated_data['mac'])
+        if not mac_valid and raise_exception:
+            raise ValidationError(detail='Bad signature.', code='bad_sig')
+
+        return not expired and mac_valid
+
+    def is_valid(self, raise_exception=False):
+        return super().is_valid(raise_exception) and self._is_mac_valid(raise_exception)
 
     def act(self):
-        if not self.is_signature_valid():
-            raise ValidationError(code='bad_sig')
         self.instance.act()
         return self.instance
 
@@ -672,18 +678,17 @@ class SignedUserAction(serializers.ModelSerializer):
         raise ValueError
 
 
-class ActivateUserSignedUserAction(SignedUserAction):
-    action = serializers.CharField(default='activate')
+class AuthenticatedActivateUserAction(AuthenticatedUserAction):
 
-    class Meta(SignedUserAction.Meta):
-        model = ActivateUserAction
-        fields = SignedUserAction.Meta.fields + ('domain',)
+    class Meta(AuthenticatedUserAction.Meta):
+        model = AuthenticatedActivateUserAction
+        fields = AuthenticatedUserAction.Meta.fields + ('domain',)
         extra_kwargs = {
-            'domain': {'required': False, 'allow_blank': True, 'allow_null': True}
+            'domain': {'required': False, 'allow_null': True}
         }
 
 
-class ChangeEmailSignedUserAction(SignedUserAction):
+class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
     new_email = serializers.CharField(
         validators=[
             CustomFieldNameUniqueValidator(
@@ -691,26 +696,24 @@ class ChangeEmailSignedUserAction(SignedUserAction):
                 lookup_field='email',
                 message='You already have another account with this email address.',
             )
-        ]
+        ],
+        required=True,
     )
 
-    class Meta(SignedUserAction.Meta):
-        model = ChangeEmailAction
-        fields = SignedUserAction.Meta.fields + ('new_email',)
-        extra_kwargs = {
-            'new_email': {'required': True}
-        }
+    class Meta(AuthenticatedUserAction.Meta):
+        model = AuthenticatedChangeEmailUserAction
+        fields = AuthenticatedUserAction.Meta.fields + ('new_email',)
 
 
-class ChangePasswordSignedUserAction(SignedUserAction):
+class AuthenticatedResetPasswordUserAction(AuthenticatedUserAction):
     new_password = serializers.CharField(write_only=True)
 
-    class Meta(SignedUserAction.Meta):
-        model = ResetPasswordAction
-        fields = SignedUserAction.Meta.fields + ('new_password',)
+    class Meta(AuthenticatedUserAction.Meta):
+        model = AuthenticatedResetPasswordUserAction
+        fields = AuthenticatedUserAction.Meta.fields + ('new_password',)
 
 
-class DeleteUserSignedUserAction(SignedUserAction):
+class AuthenticatedDeleteUserAction(AuthenticatedUserAction):
 
-    class Meta(SignedUserAction.Meta):
-        model = DeleteUserAction
+    class Meta(AuthenticatedUserAction.Meta):
+        model = AuthenticatedDeleteUserAction

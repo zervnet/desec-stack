@@ -26,8 +26,8 @@ from rest_framework.serializers import ValidationError
 from rest_framework.test import APIClient
 
 from api import settings
-from desecapi.models import Domain, User, UserAction
-from desecapi.serializers import SignedUserAction
+from desecapi.models import Domain, User
+from desecapi.serializers import AuthenticatedUserAction
 from desecapi.tests.base import DesecTestCase, PublicSuffixMockMixin
 
 
@@ -68,16 +68,16 @@ class UserManagementClient(APIClient):
         return self.post(reverse('v1:verify', kwargs={'action': action}), data)
 
     def verify_activation(self, verification_code, **kwargs):
-        return self.verify(verification_code, 'activate', **kwargs)
+        return self.verify(verification_code, 'user/activate', **kwargs)
 
     def verify_change_email(self, verification_code, **kwargs):
-        return self.verify(verification_code, 'change_email', **kwargs)
+        return self.verify(verification_code, 'user/change_email', **kwargs)
 
     def verify_reset_password(self, verification_code, **kwargs):
-        return self.verify(verification_code, 'password_reset', **kwargs)
+        return self.verify(verification_code, 'user/reset_password', **kwargs)
 
     def verify_delete(self, verification_code, **kwargs):
-        return self.verify(verification_code, 'delete', **kwargs)
+        return self.verify(verification_code, 'user/delete', **kwargs)
 
 
 class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
@@ -287,7 +287,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def assertChangeEmailVerificationSuccessResponse(self, response):
         return self.assertContains(
             response=response,
-            text="Success! Your email address has been changed.",
+            text="Success! Your email address has been changed to",
             status_code=status.HTTP_200_OK
         )
 
@@ -316,7 +316,7 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         return self.assertContains(
             response=response,
             text="Bad signature.",
-            status_code=status.HTTP_403_FORBIDDEN
+            status_code=status.HTTP_400_BAD_REQUEST
         )
 
     def assertVerificationFailureUnknownUserResponse(self, response):
@@ -686,21 +686,21 @@ class SignedUserActionTestCase(DesecTestCase):
         self.user = self.create_user()
 
     def test_has_signature(self):
-        action = UserAction(user=self.user)
-        representation = SignedUserAction(instance=action).data
-        self.assertIn(SignedUserAction.SIGNATURE_FIELD, representation.keys())
-        self.assertGreater(len(representation[SignedUserAction.SIGNATURE_FIELD]), 10)
+        action = AuthenticatedUserAction(user=self.user)
+        representation = AuthenticatedUserAction(instance=action).data
+        self.assertIn(AuthenticatedUserAction.SIGNATURE_FIELD, representation.keys())
+        self.assertGreater(len(representation[AuthenticatedUserAction.SIGNATURE_FIELD]), 10)
 
     def test_verifies_signature(self):
-        action = UserAction(user=self.user)
-        representation = SignedUserAction(instance=action).data
-        serializer = SignedUserAction(data=representation)
+        action = AuthenticatedUserAction(user=self.user)
+        representation = AuthenticatedUserAction(instance=action).data
+        serializer = AuthenticatedUserAction(data=representation)
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
-        representation[SignedUserAction.SIGNATURE_FIELD] += 'x'
+        representation[AuthenticatedUserAction.SIGNATURE_FIELD] += 'x'
         with self.assertRaises(ValidationError):
-            serializer = SignedUserAction(data=representation)
+            serializer = AuthenticatedUserAction(data=representation)
             serializer.is_valid()
             serializer.save()
 
@@ -714,15 +714,15 @@ class SignedUserActionTestCase(DesecTestCase):
         signatures = []
         for secret in secrets:
             with override_settings(SECRET_KEY=secret):
-                serializer_data1 = SignedUserAction(data).data
-                serializer_data2 = SignedUserAction(data).data
+                serializer_data1 = AuthenticatedUserAction(data).data
+                serializer_data2 = AuthenticatedUserAction(data).data
                 self.assertEqual(serializer_data1['signature'], serializer_data2['signature'])
                 signatures.append(serializer_data1['signature'])
 
         self.assertTrue(len(set(signatures)) == len(secrets))
 
     def test_missing_fields(self):
-        serializer = SignedUserAction(data={})
+        serializer = AuthenticatedUserAction(data={})
         with self.assertRaises(ValidationError) as cm:
             serializer.is_valid(raise_exception=True)
         self.assertTrue(all(all(item.code == 'required' for item in field_detail)
@@ -730,35 +730,35 @@ class SignedUserActionTestCase(DesecTestCase):
         self.assertEqual(cm.exception.detail.keys(), {'action', 'user', 'signature', 'timestamp'})
 
     def test_fake_action(self):
-        action = UserAction(user=self.user)
-        serializer_data = SignedUserAction(action).data
+        action = AuthenticatedUserAction(user=self.user)
+        serializer_data = AuthenticatedUserAction(action).data
         signed_data = json.loads(base64.urlsafe_b64decode(serializer_data['verification_code'].encode()).decode())
         signed_data['action'] = 'activate'
         serializer_data['verification_code'] = base64.urlsafe_b64encode(json.dumps(signed_data).encode()).decode()
 
-        serializer = SignedUserAction(data=serializer_data)
+        serializer = AuthenticatedUserAction(data=serializer_data)
         serializer.is_valid(raise_exception=True)
         serializer.act()
 
         signed_data['action'] = 'test'
         serializer_data['verification_code'] = base64.urlsafe_b64encode(json.dumps(signed_data).encode()).decode()
-        serializer = SignedUserAction(data=serializer_data)
+        serializer = AuthenticatedUserAction(data=serializer_data)
         with self.assertRaises(ValidationError):
             serializer.is_valid(raise_exception=True)
             serializer.act()
 
     def test_fake_email(self):
-        data = SignedUserAction({'user': self.user, 'action': 'change_email', 'email': self.random_username()}).data
+        data = AuthenticatedUserAction({'user': self.user, 'action': 'change_email', 'email': self.random_username()}).data
         data['email'] = self.random_username()
         response = self.client.post(reverse('v1:verify'), data)
-        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
     def test_fake_timestamp(self):
-        data = SignedUserAction({'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}).data
+        data = AuthenticatedUserAction({'user': self.user, 'action': 'delete', 'timestamp': int(time.time())}).data
         data['timestamp'] += 1
         response = self.client.post(reverse('v1:verify'), data)
-        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
         data['timestamp'] -= 1  # Back to normal
@@ -766,18 +766,18 @@ class SignedUserActionTestCase(DesecTestCase):
         self.assertEquals(response.status_code, status.HTTP_200_OK)
 
     def test_fake_signature(self):
-        data = SignedUserAction({'user': self.user, 'action': 'activate'}).data
+        data = AuthenticatedUserAction({'user': self.user, 'action': 'activate'}).data
         data['signature'] = data['signature'][::-1]  # Reverse
         response = self.client.post(reverse('v1:verify'), data)
-        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
     def test_fake_user(self):
         fake_user = self.create_user()
-        data = SignedUserAction({'user': self.user, 'action': 'activate'}).data
+        data = AuthenticatedUserAction({'user': self.user, 'action': 'activate'}).data
         data['user'] = fake_user.pk
         response = self.client.post(reverse('v1:verify'), data)
-        self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEquals(response.data['detail'].code, 'authentication_failed')
 
         fake_user.delete()
@@ -790,7 +790,7 @@ class SignedUserActionTestCase(DesecTestCase):
 
         @mock.patch('time.time', mock_time)
         def _construct_expired_serializer_data(data):
-            return SignedUserAction(data)
+            return AuthenticatedUserAction(data)
 
         def _run(delay):
             mock_time.return_value = time.time() - settings.VALIDITY_PERIOD_VERIFICATION_SIGNATURE + delay
@@ -801,7 +801,7 @@ class SignedUserActionTestCase(DesecTestCase):
                 self.assertEquals(response.status_code, status.HTTP_200_OK)
                 return True
             else:
-                self.assertEquals(response.status_code, status.HTTP_403_FORBIDDEN)
+                self.assertEquals(response.status_code, status.HTTP_400_BAD_REQUEST)
                 self.assertEquals(response.data['detail'], 'Signature expired.')
                 return False
 

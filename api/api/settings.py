@@ -10,6 +10,7 @@ https://docs.djangoproject.com/en/1.7/ref/settings/
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 import os
+from datetime import timedelta
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -153,8 +154,7 @@ AUTH_USER_MODEL = 'desecapi.User'
 ABUSE_BY_REMOTE_IP_PERIOD_HRS = 48
 LIMIT_USER_DOMAIN_COUNT_DEFAULT = 5
 USER_ACTIVATION_REQUIRED = True
-VALIDITY_PERIOD_VERIFICATION_SIGNATURE = 60 * 60 * 1
-ABUSE_BY_REMOTE_IP_PERIOD_HRS = 48
+VALIDITY_PERIOD_VERIFICATION_SIGNATURE = timedelta(hours=1)
 
 if DEBUG and not EMAIL_HOST:
     EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'

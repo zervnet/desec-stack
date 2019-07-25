@@ -8,13 +8,12 @@ tokens_router.register(r'', views.TokenViewSet, base_name='token')
 
 auth_urls = [
     # User management
-    path('', views.UserCreateView.as_view(), name='register'),
+    path('', views.AccountCreateView.as_view(), name='register'),
     path('account/', views.AccountView.as_view(), name='account'),
     path('account/delete/', views.AccountDeleteView.as_view(), name='account-delete'),
     path('account/change-email/', views.AccountChangeEmailView.as_view(), name='account-change-email'),
     path('account/reset-password/', views.AccountResetPasswordView.as_view(), name='account-reset-password'),
     path('login/', views.AccountLoginView.as_view(), name='login'),
-    path('verify/<action>/', views.VerifyView.as_view(), name='verify'),  # TODO or account/verify/?
 
     # Token management
     path('tokens/', include(tokens_router.urls)),
@@ -41,6 +40,9 @@ api_urls = [
 
     # Donation endpoints
     path('donation/', views.DonationList.as_view(), name='donation'),
+
+    # Authenticated Action Endpoint
+    path('verify/<path:action>/', views.AuthenticatedActionView.as_view(), name='verify'),
 ]
 
 app_name = 'desecapi'

@@ -426,44 +426,35 @@ class AccountView(generics.RetrieveAPIView):
 
 
 class AccountDeleteView(GenericAPIView):
+    authentication_classes = (auth.EmailPasswordPayloadAuthentication,)
     permission_classes = (IsAuthenticated,)
-    serializer_class = serializers.PasswordSerializer
-    # TODO use password-based authentication class
 
     def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
         action = AuthenticatedDeleteUserAction(user=self.request.user)
         request.user.send_email('delete-user', context=serializers.AuthenticatedDeleteUserActionSerializer(action).data)
 
-        # At this point, we know that we are talking to the user, so we can tell that we sent an email.
         return Response(data={'detail': 'Please check your mailbox for further account deletion instructions.'},
                         status=status.HTTP_202_ACCEPTED)
 
 
 class AccountLoginView(GenericAPIView):
-    serializer_class = serializers.LoginSerializer
-    # TODO use password-based authentication class?
+    authentication_classes = (auth.EmailPasswordPayloadAuthentication,)
+    permission_classes = (IsAuthenticated,)
 
     def post(self, request, *args, **kwargs):
-        # TODO Move to authentication class?
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data.get('user')
+        user = self.request.user
 
-        token = Token(user=user, name="login")
-        token.save()
+        token = Token.objects.create(user=user, name="login")
         user_logged_in.send(sender=user.__class__, request=self.request, user=user)
 
         data = serializers.TokenSerializer(token).data
-        return Response(data=data, status=status.HTTP_200_OK)
+        return Response(data)
 
 
 class AccountChangeEmailView(GenericAPIView):
-    permission_classes = (IsAuthenticated, )
+    authentication_classes = (auth.EmailPasswordPayloadAuthentication,)
+    permission_classes = (IsAuthenticated,)
     serializer_class = serializers.ChangeEmailSerializer
-    # TODO use password-based authentication class
 
     def post(self, request, *args, **kwargs):
         # Check password and extract email

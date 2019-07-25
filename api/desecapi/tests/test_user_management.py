@@ -51,13 +51,19 @@ class UserManagementClient(APIClient):
             'email': email,
         })
 
-    def change_email(self, token, **payload):
+    def change_email(self, email, password, **payload):
+        payload['email'] = email
+        payload['password'] = password
+        return self.post(reverse('v1:account-change-email'), payload)
+
+    def change_email_token_auth(self, token, **payload):
         return self.post(reverse('v1:account-change-email'), payload, HTTP_AUTHORIZATION='Token {}'.format(token))
 
-    def delete_account(self, token, password):
+    def delete_account(self, email, password):
         return self.post(reverse('v1:account-delete'), {
-            'password': password
-        }, HTTP_AUTHORIZATION='Token {}'.format(token))
+            'email': email,
+            'password': password,
+        })
 
     def view_account(self, token):
         return self.get(reverse('v1:account'), HTTP_AUTHORIZATION='Token {}'.format(token))
@@ -111,11 +117,11 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
     def reset_password(self, email):
         return self.client.reset_password(email)
 
-    def change_email(self, password, new_email):
-        return self.client.change_email(self.token, password=password, new_email=new_email)
+    def change_email(self, new_email):
+        return self.client.change_email(self.email, self.password, new_email=new_email)
 
-    def delete_account(self, token, password):
-        return self.client.delete_account(token, password)
+    def delete_account(self, email, password):
+        return self.client.delete_account(email, password)
 
     def assertContains(self, response, text, count=None, status_code=200, msg_prefix='', html=False):
         msg_prefix += '\nResponse: %s' % response.data
@@ -393,10 +399,10 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         self.assertPassword(email, new_password)
         return new_password
 
-    def _test_change_email(self, password):
+    def _test_change_email(self):
         old_email = self.email
         new_email = self.random_username()
-        self.assertChangeEmailSuccessResponse(self.change_email(password, new_email))
+        self.assertChangeEmailSuccessResponse(self.change_email(new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
         self.assertChangeEmailVerificationSuccessResponse(self.client.verify_change_email(verification_code))
         self.assertChangeEmailNotificationEmail(old_email)
@@ -405,8 +411,8 @@ class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
         self.email = new_email
         return self.email
 
-    def _test_delete_account(self, email, password, token):
-        self.assertDeleteAccountSuccessResponse(self.delete_account(token, password))
+    def _test_delete_account(self, email, password):
+        self.assertDeleteAccountSuccessResponse(self.delete_account(email, password))
         verification_code = self.assertDeleteAccountEmail(email)
         self.assertDeleteAccountVerificationSuccessResponse(self.client.verify_delete(verification_code))
         self.assertUserDoesNotExist(email)
@@ -419,8 +425,8 @@ class UserLifeCycleTestCase(UserManagementTestCase):
         self.password = self._test_reset_password(self.email)
         mail.outbox = []
         self.token = self._test_login()
-        email = self._test_change_email(self.password)
-        self._test_delete_account(email, self.password, self.token)
+        email = self._test_change_email()
+        self._test_delete_account(email, self.password)
 
 
 class NoUserAccountTestCase(UserLifeCycleTestCase):
@@ -501,12 +507,12 @@ class HasUserAccountTestCase(UserManagementTestCase):
     def _start_change_email(self):
         new_email = self.random_username()
         self.assertChangeEmailSuccessResponse(
-            response=self.change_email(self.password, new_email)
+            response=self.change_email(new_email)
         )
         return self.assertChangeEmailVerificationEmail(new_email), new_email
 
     def _start_delete_account(self):
-        self.assertDeleteAccountSuccessResponse(self.delete_account(self.token, self.password))
+        self.assertDeleteAccountSuccessResponse(self.delete_account(self.email, self.password))
         return self.assertDeleteAccountEmail(self.email)
 
     def _finish_reset_password(self, verification_code, expect_success=True):
@@ -568,37 +574,36 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_reset_password_validation_unknown_user(self):
         verification_code = self._start_reset_password()
-        self._test_delete_account(self.email, self.password, self.token)
+        self._test_delete_account(self.email, self.password)
         self.assertVerificationFailureUnknownUserResponse(
             response=self.client.verify_reset_password(verification_code)
         )
         self.assertNoEmailSent()
 
     def test_change_email(self):
-        self._test_change_email(self.password)
+        self._test_change_email()
 
     def test_change_email_requires_password(self):
-        # Make sure that the account's email address cannot be changed with a token alone (password required)
+        # Make sure that the account's email address cannot be changed with a token (password required)
         new_email = self.random_username()
-        response = self.client.change_email(self.token, new_email=new_email)
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data['password'][0].code, 'required')
+        response = self.client.change_email_token_auth(self.token, new_email=new_email)
+        self.assertContains(response, 'You do not have permission', status_code=status.HTTP_403_FORBIDDEN)
         self.assertNoEmailSent()
 
     def test_change_email_multiple_times(self):
         for _ in range(3):
-            self._test_change_email(self.password)
+            self._test_change_email()
 
     def test_change_email_user_exists(self):
         known_email, _ = self._test_registration()
         # We send a verification link to the new email and check account existence only later, upon verification
         self.assertChangeEmailSuccessResponse(
-            response=self.change_email(self.password, known_email)
+            response=self.change_email(known_email)
         )
 
     def test_change_email_verification_user_exists(self):
         new_email = self.random_username()
-        self.assertChangeEmailSuccessResponse(self.change_email(self.password, new_email))
+        self.assertChangeEmailSuccessResponse(self.change_email(new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
         new_email, new_password = self._test_registration(new_email)
         self.assertChangeEmailFailureAddressTakenResponse(
@@ -611,7 +616,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_change_email_verification_change_password(self):
         new_email = self.random_username()
-        self.assertChangeEmailSuccessResponse(self.change_email(self.password, new_email))
+        self.assertChangeEmailSuccessResponse(self.change_email(new_email))
         verification_code = self.assertChangeEmailVerificationEmail(new_email)
         self.assertChangeEmailVerificationSuccessResponse(
             response=self.client.verify_change_email(verification_code, password=self.random_password())
@@ -622,7 +627,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_change_email_same_email(self):
         self.assertChangeEmailFailureSameAddressResponse(
-            response=self.change_email(self.password, self.email)
+            response=self.change_email(self.email)
         )
         self.assertUserExists(self.email)
 
@@ -676,7 +681,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_change_email_validation_unknown_user(self):
         verification_code, new_email = self._start_change_email()
-        self._test_delete_account(self.email, self.password, self.token)
+        self._test_delete_account(self.email, self.password)
         self.assertVerificationFailureUnknownUserResponse(
             response=self.client.verify_change_email(verification_code)
         )
@@ -684,7 +689,7 @@ class HasUserAccountTestCase(UserManagementTestCase):
 
     def test_delete_account_validation_unknown_user(self):
         verification_code = self._start_delete_account()
-        self._test_delete_account(self.email, self.password, self.token)
+        self._test_delete_account(self.email, self.password)
         self.assertVerificationFailureUnknownUserResponse(
             response=self.client.verify_delete(verification_code)
         )

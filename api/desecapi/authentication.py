@@ -5,9 +5,10 @@ from rest_framework.authentication import (
     BaseAuthentication,
     get_authorization_header,
     TokenAuthentication as RestFrameworkTokenAuthentication,
-)
+    BasicAuthentication)
 
 from desecapi.models import Token
+from desecapi.serializers import EmailPasswordSerializer
 
 
 class TokenAuthentication(RestFrameworkTokenAuthentication):
@@ -99,3 +100,12 @@ class URLParamAuthentication(BaseAuthentication):
             raise exceptions.AuthenticationFailed('badauth')
 
         return token.user, token
+
+
+class EmailPasswordPayloadAuthentication(BasicAuthentication):
+
+    def authenticate(self, request):
+        serializer = EmailPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return None, None
+        return self.authenticate_credentials(serializer.data['email'], serializer.data['password'], request)

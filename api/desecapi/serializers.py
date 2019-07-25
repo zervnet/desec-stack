@@ -540,21 +540,11 @@ class EmailSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
 
-class BasePasswordSerializer(serializers.Serializer):
+class EmailPasswordSerializer(EmailSerializer):
     password = serializers.CharField(trim_whitespace=False)
 
 
-class PasswordSerializer(BasePasswordSerializer):
-    def validate_password(self, value):  # TODO authentication should not be serializer business
-        user = self.context.get('request').user
-        if not user.check_password(value):
-            msg = 'Password mismatch.'
-            raise serializers.ValidationError(msg, code='authorization')
-
-        return value
-
-
-class ChangeEmailSerializer(PasswordSerializer):
+class ChangeEmailSerializer(serializers.Serializer):
     # PasswordSerializer confirms that given password belongs to authenticated user.
     # Independently of that, a new email address must be given.
     new_email = serializers.EmailField()
@@ -563,21 +553,6 @@ class ChangeEmailSerializer(PasswordSerializer):
         if value == self.context['request'].user.email:
             raise serializers.ValidationError('Email address unchanged.')
         return value
-
-
-class LoginSerializer(EmailSerializer, BasePasswordSerializer):
-    # This is inspired by rest_framework.authtoken.serializers.AuthTokenSerializer.
-    def validate(self, attrs):  # TODO authentication should not be serializer business
-        user = authenticate(request=self.context.get('request'), email=attrs['email'], password=attrs['password'])
-
-        # The authenticate call simply returns None for is_active=False users.
-        # (Assuming the default ModelBackend authentication backend.)
-        if not user:
-            msg = 'Unable to log in with provided credentials.'
-            raise serializers.ValidationError(msg, code='authorization')
-
-        attrs['user'] = user
-        return attrs
 
 
 class CustomFieldNameUniqueValidator(UniqueValidator):

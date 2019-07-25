@@ -366,16 +366,15 @@ class RR(models.Model):
         return '<RR %s>' % self.content
 
 
-class AuthenticatedUserAction(models.Model):
-    user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
+class AuthenticatedAction(models.Model):
     timestamp = models.PositiveIntegerField(default=lambda: int(datetime.timestamp(datetime.now())))
 
     class Meta:
         managed = False
 
     def __init__(self, *args, **kwargs):
-        # silently ignore any value supplied for the mac value
-        mac = kwargs.pop('mac', None)
+        # silently ignore any value supplied for the mac value, that makes it easier to use with DRF serializers
+        kwargs.pop('mac', None)
         super().__init__(*args, **kwargs)
 
     @property
@@ -406,20 +405,21 @@ class AuthenticatedUserAction(models.Model):
             self.mac,
         )
 
-    def check_expiration(self, validity_period: timedelta):
+    def check_expiration(self, validity_period: timedelta, check_time: datetime = datetime.now()):
         """
         Checks if the action's timestamp is no older than the given validity period. Note that the message
         authentication code itself is not verified by this method.
         :param validity_period: How long after issuance the MAC of this action is considered valid.
+        :param check_time: Point in time for which to check the expiration. Defaults to datetime.now().
         :return: True, if not considered expired; False otherwise -- i.e. True if valid, False if expired.
         """
         issue_time = datetime.fromtimestamp(self.timestamp)
-        check_time = datetime.now()
+        check_time = check_time or datetime.now()
         return check_time - issue_time <= validity_period
 
     def signature_data(self):
         """
-        Returns a dictionary that defines the state of this user action. The signature of this action will be valid
+        Returns an ordered list that defines the state of this user action. The signature of this action will be valid
         unless the state changes, therefore if any data included in the return value of this function changes, the
         signature will change.
 
@@ -427,18 +427,16 @@ class AuthenticatedUserAction(models.Model):
 
         Return value must be deterministic and JSON-serializable.
 
-        Use caution when overriding this method, usually you want the parent's return value to be included in the
-        final value.
-        :return: Data to be signed.
+        Use caution when overriding this method, you will usually want to append value to the list returned by the
+        parent. Overriding the behavior altogether could result in reducing the state to fewer variables, resulting
+        in valid signatures when they were intended to be invalid. The suggested method for overriding is
+
+            def signature_data(self):
+                return super().signature_data() + [self.important_value, self.another_added_value]
+
+        :return: List of values to be signed.
         """
-        return {
-            'user_pk': self.user.id,
-            'user_email': self.user.email,
-            'user_password': self.user.password,
-            'user_is_active': self.user.is_active,
-            'timestamp': self.timestamp,
-            'action': self.action,
-        }
+        return [self.timestamp, self.action]
 
     def act(self):
         """
@@ -446,6 +444,19 @@ class AuthenticatedUserAction(models.Model):
         object.
         :return: None
         """
+        raise NotImplementedError
+
+
+class AuthenticatedUserAction(AuthenticatedAction):
+    user = models.ForeignKey(User, on_delete=models.DO_NOTHING)
+
+    class Meta:
+        managed = False
+
+    def signature_data(self):
+        return super().signature_data() + [self.user.id, self.user.email, self.user.password, self.user.is_active]
+
+    def act(self):
         raise NotImplementedError
 
 
@@ -466,10 +477,7 @@ class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
         managed = False
 
     def signature_data(self):
-        data = super().signature_data()
-        assert 'new_email' not in data
-        data['new_email'] = self.new_email
-        return data
+        return super().signature_data() + [self.new_email]
 
     def act(self):
         self.user.change_email(self.new_email)

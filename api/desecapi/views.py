@@ -515,7 +515,10 @@ class AuthenticatedActionView(GenericAPIView):
     class AuthenticatedActionAuthenticator(BaseAuthentication):
         """
         Authenticates a request based on whether the serializer defined by the `action` kwarg and
-        `AuthenticatedActionView.KNOWN_ACTION_SERIALIZERS` determines the validity of the payload (`is_valid`).
+        `AuthenticatedActionView.KNOWN_ACTION_SERIALIZERS` determines the validity of the given verification code
+        and additional data (using `serializer.is_valid`). The serializers input data will be determined by (a) the GET
+        query parameters for GET requests and (b) the request payload for POST requests. Other request methods will
+        fail authentication regardless of other conditions.
 
         If the request is valid, the AuthenticatedAction instance will be attached to the view as `authenticated_action`
         attribute.
@@ -533,8 +536,21 @@ class AuthenticatedActionView(GenericAPIView):
             if self.view.kwargs['action'] not in self.view.KNOWN_ACTION_SERIALIZERS:
                 raise NotFound()  # TODO add test
 
+            # determine serializer input
+            if request.method == 'GET':
+                # If you thought query_params is just a dict with unique keys, you are wrong! 😭
+                # query_params is a MultiValueDict, which means that we cannot use data = {**query_params} or
+                # query_params.copy(), as all values would appear as list, possibly accounting for multiple values of
+                # the same key! However, if we iterate like done below, we get single values; if keys are not unique
+                # the last one (in some ordering of items). See also django.utils.datastructures.MultiValueDict.
+                data = {key: value for key, value in request.query_params.items()}
+            elif request.method == 'POST':
+                data = request.data
+            else:
+                return None, None
+
             serializer_class = self.view.KNOWN_ACTION_SERIALIZERS[self.view.kwargs['action']]
-            serializer = serializer_class(data=request.data, context=self.view.get_serializer_context())
+            serializer = serializer_class(data=data, context=self.view.get_serializer_context())
             serializer.is_valid(raise_exception=True)  # TODO 403 Permission Denied for bad signatures / expired?
             self.view.authenticated_action = serializer.instance
 
@@ -554,7 +570,15 @@ class AuthenticatedActionView(GenericAPIView):
     def get_authenticators(self):
         return [self.AuthenticatedActionAuthenticator(self)]
 
+    def get(self, request, *args, **kwargs):
+        # TODO consider not allowing reset password here, as the new password will appear in plain text in the query
+        #  parameters and therefore likely im web server logfile and/or client browser history.
+        return self.take_action()
+
     def post(self, request, *args, **kwargs):
+        return self.take_action()
+
+    def take_action(self):
         # execute the action
         self.authenticated_action.act()
 

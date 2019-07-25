@@ -80,6 +80,18 @@ class UserManagementClient(APIClient):
         return self.verify(verification_code, 'user/delete', **kwargs)
 
 
+class QueryVerifyUserManagementClient(UserManagementClient):
+    """
+    Request client for user management, but do all verification requests as GET with the verification code as query
+    parameter.
+    """
+
+    def verify(self, verification_code, action, **kwargs):
+        data = {'c': verification_code}
+        data.update(kwargs)
+        return self.get(reverse('v1:verify_short', kwargs={'action': action}), data)
+
+
 class UserManagementTestCase(DesecTestCase, PublicSuffixMockMixin):
 
     client_class = UserManagementClient
@@ -677,6 +689,10 @@ class HasUserAccountTestCase(UserManagementTestCase):
             response=self.client.verify_delete(verification_code)
         )
         self.assertNoEmailSent()
+
+
+class QueryVerifyHasUserAccountTestCase(HasUserAccountTestCase):
+    client_class = QueryVerifyUserManagementClient
 
 
 class SignedUserActionTestCase(DesecTestCase):

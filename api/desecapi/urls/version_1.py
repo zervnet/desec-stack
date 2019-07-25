@@ -43,6 +43,7 @@ api_urls = [
 
     # Authenticated Action Endpoint
     path('verify/<path:action>/', views.AuthenticatedActionView.as_view(), name='verify'),
+    path('v/<path:action>/', views.AuthenticatedActionView.as_view(), name='verify_short'),
 ]
 
 app_name = 'desecapi'

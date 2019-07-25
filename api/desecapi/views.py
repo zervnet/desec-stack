@@ -437,6 +437,7 @@ class AccountDeleteView(GenericAPIView):
                         status=status.HTTP_202_ACCEPTED)
 
 
+# TODO add logout view?
 class AccountLoginView(GenericAPIView):
     authentication_classes = (auth.EmailPasswordPayloadAuthentication,)
     permission_classes = (IsAuthenticated,)

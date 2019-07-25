@@ -600,11 +600,7 @@ class CustomFieldNameUniqueValidator(UniqueValidator):
         return qs_filter(queryset, **filter_kwargs)
 
 
-class ActionTypeSerializer(serializers.BaseSerializer):
-    action = serializers.ChoiceField(choices=ACTION_NAMES.values())
-
-
-class AuthenticatedUserAction(serializers.ModelSerializer):
+class AuthenticatedUserActionSerializer(serializers.ModelSerializer):
     # regular model fields
     user = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
@@ -629,7 +625,7 @@ class AuthenticatedUserAction(serializers.ModelSerializer):
             return json.loads(urlsafe_b64decode(packed_data['verification_code'].encode()).decode())
         except KeyError:
             raise ValidationError('No verification code.')
-        except (json.JSONDecodeError, binascii.Error):
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError, binascii.Error):
             # TODO list of exceptions complete?
             raise ValidationError('Invalid verification code.')
 
@@ -678,17 +674,17 @@ class AuthenticatedUserAction(serializers.ModelSerializer):
         raise ValueError
 
 
-class AuthenticatedActivateUserAction(AuthenticatedUserAction):
+class AuthenticatedActivateUserActionSerializer(AuthenticatedUserActionSerializer):
 
-    class Meta(AuthenticatedUserAction.Meta):
+    class Meta(AuthenticatedUserActionSerializer.Meta):
         model = AuthenticatedActivateUserAction
-        fields = AuthenticatedUserAction.Meta.fields + ('domain',)
+        fields = AuthenticatedUserActionSerializer.Meta.fields + ('domain',)
         extra_kwargs = {
             'domain': {'required': False, 'allow_null': True}
         }
 
 
-class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
+class AuthenticatedChangeEmailUserActionSerializer(AuthenticatedUserActionSerializer):
     new_email = serializers.CharField(
         validators=[
             CustomFieldNameUniqueValidator(
@@ -700,20 +696,20 @@ class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
         required=True,
     )
 
-    class Meta(AuthenticatedUserAction.Meta):
+    class Meta(AuthenticatedUserActionSerializer.Meta):
         model = AuthenticatedChangeEmailUserAction
-        fields = AuthenticatedUserAction.Meta.fields + ('new_email',)
+        fields = AuthenticatedUserActionSerializer.Meta.fields + ('new_email',)
 
 
-class AuthenticatedResetPasswordUserAction(AuthenticatedUserAction):
+class AuthenticatedResetPasswordUserActionSerializer(AuthenticatedUserActionSerializer):
     new_password = serializers.CharField(write_only=True)
 
-    class Meta(AuthenticatedUserAction.Meta):
+    class Meta(AuthenticatedUserActionSerializer.Meta):
         model = AuthenticatedResetPasswordUserAction
-        fields = AuthenticatedUserAction.Meta.fields + ('new_password',)
+        fields = AuthenticatedUserActionSerializer.Meta.fields + ('new_password',)
 
 
-class AuthenticatedDeleteUserAction(AuthenticatedUserAction):
+class AuthenticatedDeleteUserActionSerializer(AuthenticatedUserActionSerializer):
 
-    class Meta(AuthenticatedUserAction.Meta):
+    class Meta(AuthenticatedUserActionSerializer.Meta):
         model = AuthenticatedDeleteUserAction

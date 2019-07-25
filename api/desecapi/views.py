@@ -409,7 +409,7 @@ class AccountCreateView(generics.CreateAPIView):
             domain = serializer.validated_data.get('domain')
             if domain or activation_required:
                 instance = AuthenticatedActivateUserAction(user=user, domain=domain)
-                verification = serializers.AuthenticatedActivateUserAction(instance).data
+                verification = serializers.AuthenticatedActivateUserActionSerializer(instance).data
                 user.send_email('activate', context=verification)
 
         # This request is unauthenticated, so don't expose whether we did anything.
@@ -435,7 +435,7 @@ class AccountDeleteView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
 
         action = AuthenticatedDeleteUserAction(user=self.request.user)
-        request.user.send_email('delete-user', context=serializers.AuthenticatedDeleteUserAction(action).data)
+        request.user.send_email('delete-user', context=serializers.AuthenticatedDeleteUserActionSerializer(action).data)
 
         # At this point, we know that we are talking to the user, so we can tell that we sent an email.
         return Response(data={'detail': 'Please check your mailbox for further account deletion instructions.'},
@@ -471,7 +471,7 @@ class AccountChangeEmailView(GenericAPIView):
         serializer.is_valid(raise_exception=True)
         new_email = serializer.validated_data['new_email']
 
-        verification_code = serializers.AuthenticatedChangeEmailUserAction(
+        verification_code = serializers.AuthenticatedChangeEmailUserActionSerializer(
             AuthenticatedChangeEmailUserAction(user=request.user, new_email=new_email)
         ).data['verification_code']
         request.user.send_email('change-email', recipient=new_email, context={
@@ -498,7 +498,7 @@ class AccountResetPasswordView(GenericAPIView):
             pass
         else:
             action = AuthenticatedResetPasswordUserAction(user=user)
-            user.send_email('reset-password', context=serializers.AuthenticatedResetPasswordUserAction(action).data)
+            user.send_email('reset-password', context=serializers.AuthenticatedResetPasswordUserActionSerializer(action).data)
 
         # This request is unauthenticated, so don't expose whether we did anything.
         return Response(data={'detail': 'Please check your mailbox for further password reset instructions.'},
@@ -541,10 +541,10 @@ class AuthenticatedActionView(GenericAPIView):
             return self.view.authenticated_action.user, None
 
     KNOWN_ACTION_SERIALIZERS = {
-        'user/activate': serializers.AuthenticatedActivateUserAction,
-        'user/change_email': serializers.AuthenticatedChangeEmailUserAction,
-        'user/reset_password': serializers.AuthenticatedResetPasswordUserAction,
-        'user/delete': serializers.AuthenticatedDeleteUserAction,
+        'user/activate': serializers.AuthenticatedActivateUserActionSerializer,
+        'user/change_email': serializers.AuthenticatedChangeEmailUserActionSerializer,
+        'user/reset_password': serializers.AuthenticatedResetPasswordUserActionSerializer,
+        'user/delete': serializers.AuthenticatedDeleteUserActionSerializer,
     }
 
     def __init__(self, *args, **kwargs):

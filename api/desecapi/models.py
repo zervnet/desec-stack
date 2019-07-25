@@ -133,9 +133,8 @@ class User(AbstractBaseUser):
         self.send_email('change-email-confirmation-old-email', recipient=old_email)
 
     def change_password(self, raw_password):
-        super().set_password(raw_password)  # TODO self.set_password?
+        self.set_password(raw_password)
         self.save()
-
         self.send_email('password-change-confirmation')
 
     def send_email(self, reason, context=None, recipient=None):

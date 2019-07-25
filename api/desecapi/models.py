@@ -398,7 +398,7 @@ class AuthenticatedAction(models.Model):
         """
         Returns a human-readable string containing the name of this action class that uniquely identifies this action.
         """
-        return ACTION_NAMES[self.__class__]
+        return NotImplementedError
 
     @property
     def mac(self):
@@ -476,6 +476,10 @@ class AuthenticatedUserAction(AuthenticatedAction):
     class Meta:
         managed = False
 
+    @property
+    def action(self):
+        raise NotImplementedError
+
     def signature_data(self):
         return super().signature_data() + [self.user.id, self.user.email, self.user.password, self.user.is_active]
 
@@ -489,6 +493,10 @@ class AuthenticatedActivateUserAction(AuthenticatedUserAction):
     class Meta:
         managed = False
 
+    @property
+    def action(self):
+        return 'user/activate'
+
     def act(self):
         self.user.activate()
 
@@ -498,6 +506,10 @@ class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
 
     class Meta:
         managed = False
+
+    @property
+    def action(self):
+        return 'user/change_email'
 
     def signature_data(self):
         return super().signature_data() + [self.new_email]
@@ -512,6 +524,10 @@ class AuthenticatedResetPasswordUserAction(AuthenticatedUserAction):
     class Meta:
         managed = False
 
+    @property
+    def action(self):
+        return 'user/reset_password'
+
     def act(self):
         self.user.change_password(self.new_password)
 
@@ -521,14 +537,9 @@ class AuthenticatedDeleteUserAction(AuthenticatedUserAction):
     class Meta:
         managed = False
 
+    @property
+    def action(self):
+        return 'user/delete'
+
     def act(self):
         self.user.delete()
-
-
-ACTION_CLASSES = {
-    'user/activate': AuthenticatedActivateUserAction,
-    'user/change_email': AuthenticatedChangeEmailUserAction,
-    'user/reset_password': AuthenticatedResetPasswordUserAction,
-    'user/delete': AuthenticatedDeleteUserAction,
-}
-ACTION_NAMES = {c: n for n, c in ACTION_CLASSES.items()}

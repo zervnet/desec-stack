@@ -14,9 +14,10 @@ from rest_framework.settings import api_settings
 from rest_framework.validators import UniqueTogetherValidator, UniqueValidator, qs_filter
 
 from api import settings
+# TODO organize imports
 from desecapi.models import Domain, Donation, User, RRset, Token, RR, AuthenticatedUserAction, \
     AuthenticatedActivateUserAction, AuthenticatedChangeEmailUserAction, \
-    AuthenticatedDeleteUserAction, AuthenticatedResetPasswordUserAction, ACTION_NAMES
+    AuthenticatedDeleteUserAction, AuthenticatedResetPasswordUserAction, ACTION_NAMES, AuthenticatedAction
 
 
 class TokenSerializer(serializers.ModelSerializer):
@@ -600,20 +601,12 @@ class CustomFieldNameUniqueValidator(UniqueValidator):
         return qs_filter(queryset, **filter_kwargs)
 
 
-class AuthenticatedUserActionSerializer(serializers.ModelSerializer):
-    # regular model fields
-    user = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        error_messages={'does_not_exist': 'This user does not exist.'}  # TODO this validation may happen before the
-                                                                        #  mac validation?
-    )
-
-    # property-based model fields
-    mac = serializers.CharField()
+class AuthenticatedActionSerializer(serializers.ModelSerializer):
+    mac = serializers.CharField()  # serializer read-write, but model read-only field
 
     class Meta:
-        model = AuthenticatedUserAction
-        fields = ('action', 'user', 'mac', 'timestamp')
+        model = AuthenticatedAction
+        fields = ('action', 'mac', 'timestamp')
 
     @staticmethod
     def _pack(unpacked_data):
@@ -672,6 +665,18 @@ class AuthenticatedUserActionSerializer(serializers.ModelSerializer):
 
     def save(self, **kwargs):
         raise ValueError
+
+
+class AuthenticatedUserActionSerializer(AuthenticatedActionSerializer):
+    user = serializers.PrimaryKeyRelatedField(  # restate to change validation error message
+        queryset=User.objects.all(),
+        error_messages={'does_not_exist': 'This user does not exist.'}  # TODO this validation may happen before the
+                                                                        #  mac validation?
+    )
+
+    class Meta:
+        model = AuthenticatedUserAction
+        fields = AuthenticatedActionSerializer.Meta.fields + ('user',)
 
 
 class AuthenticatedActivateUserActionSerializer(AuthenticatedUserActionSerializer):

@@ -4,7 +4,6 @@ import re
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 import psl_dns
-from django.contrib.auth import authenticate
 from django.core.validators import MinValueValidator
 from django.db.models import Model, Q
 from rest_framework import serializers
@@ -17,7 +16,7 @@ from api import settings
 # TODO organize imports
 from desecapi.models import Domain, Donation, User, RRset, Token, RR, AuthenticatedUserAction, \
     AuthenticatedActivateUserAction, AuthenticatedChangeEmailUserAction, \
-    AuthenticatedDeleteUserAction, AuthenticatedResetPasswordUserAction, ACTION_NAMES, AuthenticatedAction
+    AuthenticatedDeleteUserAction, AuthenticatedResetPasswordUserAction, AuthenticatedAction
 
 
 class TokenSerializer(serializers.ModelSerializer):

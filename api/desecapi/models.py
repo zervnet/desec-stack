@@ -210,7 +210,7 @@ class Domain(models.Model):
         return self.partition_name()[1]
 
     def partition_name(domain):
-        name = domain.name if isinstance(domain, Domain) else domain
+        name = domain.name if isinstance(domain, Domain) else domain  # TODO where is this used?
         subname, _, parent_name = name.partition('.')
         return subname, parent_name or None
 

@@ -217,7 +217,7 @@ class Root(APIView):
         # TODO update
         if self.request.user.is_authenticated:
             routes = {
-                'account': reverse('account', request=request),
+                'account': reverse('account', request=request),  # TODO update this in particular
                 'tokens': reverse('token-list', request=request),
                 'domains': reverse('domain-list', request=request),
             }

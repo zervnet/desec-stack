@@ -374,7 +374,7 @@ class AuthenticatedAction(models.Model):
 
     AuthenticatedAction provides the `mac` property that returns a Message Authentication Code (MAC) based on the
     state. By default, the state contains the action's name (defined by the `name` property) and a timestamp; the
-    state can be extended by (carefully) overriding the `signature_data` method. Any AuthenticatedAction instance of
+    state can be extended by (carefully) overriding the `mac_state` method. Any AuthenticatedAction instance of
     the same subclass and state will deterministically have the same MAC, effectively allowing authenticated
     procedure calls by third parties according to the following protocol:
 
@@ -404,10 +404,10 @@ class AuthenticatedAction(models.Model):
     def mac(self):
         """
         Deterministically generates a message authentication code (MAC) for this action, based on the state as defined
-        by `self.signature_data`. Identical state is guaranteed to yield identical MAC.
+        by `self.mac_state`. Identical state is guaranteed to yield identical MAC.
         :return:
         """
-        return Signer().signature(json.dumps(self.signature_data()))
+        return Signer().signature(json.dumps(self.mac_state()))
 
     def check_mac(self, mac):
         """
@@ -433,9 +433,7 @@ class AuthenticatedAction(models.Model):
         check_time = check_time or datetime.now()
         return check_time - issue_time <= validity_period
 
-    # TODO rethink naming convention: Message Authentication Code, but signature_data? Consequently, below method
-    #  should be called 'message' or 'message_data'. According the the doc, it should be called 'state'.
-    def signature_data(self):
+    def mac_state(self):
         """
         Returns an ordered list that defines the state of this user action. The signature of this action will be valid
         unless the state changes, therefore if any data included in the return value of this function changes, the
@@ -450,8 +448,8 @@ class AuthenticatedAction(models.Model):
         parent. Overriding the behavior altogether could result in reducing the state to fewer variables, resulting
         in valid signatures when they were intended to be invalid. The suggested method for overriding is
 
-            def signature_data(self):
-                return super().signature_data() + [self.important_value, self.another_added_value]
+            def mac_state(self):
+                return super().mac_state() + [self.important_value, self.another_added_value]
 
         :return: List of values to be signed.
         """
@@ -480,8 +478,8 @@ class AuthenticatedUserAction(AuthenticatedAction):
     def name(self):
         raise NotImplementedError
 
-    def signature_data(self):
-        return super().signature_data() + [self.user.id, self.user.email, self.user.password, self.user.is_active]
+    def mac_state(self):
+        return super().mac_state() + [self.user.id, self.user.email, self.user.password, self.user.is_active]
 
     def act(self):
         raise NotImplementedError
@@ -511,8 +509,8 @@ class AuthenticatedChangeEmailUserAction(AuthenticatedUserAction):
     def name(self):
         return 'user/change_email'
 
-    def signature_data(self):
-        return super().signature_data() + [self.new_email]
+    def mac_state(self):
+        return super().mac_state() + [self.new_email]
 
     def act(self):
         self.user.change_email(self.new_email)

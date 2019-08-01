@@ -130,11 +130,11 @@ While there are certainly many ways to get started hacking desec-stack, here is 
     jq, httpie, libmysqlclient-dev, python3-dev (>= 3.7) and python3-venv (>= 3.7) are useful if you want to follow this guide.
     To install everything you need for this guide except docker and docker-compose, use
 
-       sudo apt install curl git httpie jq libmysqlclient-dev python3.7-dev python3.7-venv
+       sudo apt install curl git httpie jq libmysqlclient-dev python3.7-dev python3.7-venv certbot
 
 1. **Get the code.** Clone this repository to your favorite location.
 
-       git clone git@github.com:desec-io/desec-stack.git
+       git clone https://github.com/desec-io/desec-stack.git
 
 1. **Obtain Domain Names.** To run desec-stack, this guide uses a subdomain of dedyn.io provided by desec.io.
     Install the httpie software, `sudo apt install httpie` to run the following commands.
@@ -185,7 +185,8 @@ While there are certainly many ways to get started hacking desec-stack, here is 
 1. **Obtain certificates.** desec-stack requires SSL certificates for the above-mentioned `desec` and `dedyn` hostnames as well as for various subdomains.
     (For a complete list, see `www/README.md`.)
     While we recommend to obtain signed certificates from Let's Encrypt, it's also possible to let desec-stack generate self-signed certificates on startup
-    by just skipping this step. To use the deSEC certbot hook, first download it to an appropriate location and set up your credentials and domain name.
+    by just skipping this step. To use the deSEC certbot hook, first download it to an appropriate location and set up your credentials and domain name. 
+    (This step needs to be done in the same shell as step 3 to work as intended.)
 
        mkdir -p ~/bin
        cd ~/bin
@@ -205,7 +206,7 @@ While there are certainly many ways to get started hacking desec-stack, here is 
            -d "*.${DOMAIN}" certonly
 
     Note that the definition of config, logs and work dir are only necessary if you do not want to run certbot as root.
-    Verifying the DNS challenge takes a while, so allow this command to take a couple of minutes.
+    Verifying the DNS challenge takes a while, so allow this command to take a couple of minutes. When the command terminates it will display a red error message, this is normal behavior and expected.
     After successfully retrieving the certificate, you can find them in `certbot/config/live/$DOMAIN/`.
     To make them available to desec-stack (in the default location), we copy certificate and keys.
     In the project root directory,
@@ -248,8 +249,9 @@ While there are certainly many ways to get started hacking desec-stack, here is 
 
        ./dev
 
+    in a new shell, as the log output will block the shell and we still need the shell variables that were defined earlier.
     If you run desec-stack for the first time, this will require a couple of downloads and take a while.
-    Once it is up and running, you can query the API home endpoint:
+    Once it is up and running, you can query the API home endpoint (in the old shell from the steps before):
 
        http GET https://desec.${DOMAIN}/api/v1/
 
@@ -306,7 +308,7 @@ While there are certainly many ways to get started hacking desec-stack, here is 
 
     1. Open the project root directory `desec-stack` in PyCharm and select File › Settings.
         1. In Project: desec-stack › Project Structure, mark the `api/` folder as a source folder.
-        2. In Project: desec-stack › Project Interpreter, add a new interpreter. Choose "existing environment" and select `api/api/venv/bin/python3` from the project root.
+        2. In Project: desec-stack › Project Interpreter, add a new interpreter. Choose "existing environment" and select `api/venv/bin/python3` from the project root.
         3. In Languages & Frameworks › Django, enable the Django support and set the Django project root to `api/`.
 
     1. From the PyCharm menu, select Run › Edit Configurations and select the "Django tests" template from the list.
@@ -319,6 +321,6 @@ While there are certainly many ways to get started hacking desec-stack, here is 
 
            file:api//*.py&&!file:api/venv//*&&!file:api/manage.py&&!file:api/api/wsgi.py&&!file:api/desecapi/migrations//*
 
-    From this point on, you are set up to use most of PyCharm's convenience features.
+        From this point on, you are set up to use most of PyCharm's convenience features.
 
     1. For PyCharm's Python Console, the environment variables of your `.env` file and `DJANGO_SETTINGS_MODULE=api.settings_quick_test` need to be configured in Settings › Build, Execution, Deployment › Console › Django Console. (Note that if you need to work with the database, you need to initialize it first by running all migrations; otherwise, the model tables will be missing from the database.)
